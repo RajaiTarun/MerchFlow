@@ -1,5 +1,6 @@
 const express = require('express');
 const { Pool } = require('pg');
+const { connectRabbitMQ } = require('./messaging/rabbitmq');
 const Redis = require('ioredis'); // this is redis driver node -> ioredis -> Redis
 // redis short notes are available in the gpt chat attached in the notes.md file
 require('dotenv').config({ path: '../../.env' });
@@ -56,6 +57,14 @@ app.get('/health', async (req, res) => {
         timestamp: new Date().toISOString()
     });
 })
+
+connectRabbitMQ()
+    .catch(err => {
+        console.error(
+            '[RABBITMQ] Startup connection failed:',
+            err.message
+        );
+    });
 
 app.listen(PORT, () => {
     console.log(`[ORDER SERVICE] listening on port ${PORT}`);

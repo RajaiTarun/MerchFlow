@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 
-const inventoryCompensationSchema = new mongoose.Schema(
+const inventoryReservationSchema = new mongoose.Schema(
     {
         reservationId: {
             type: String,
@@ -18,6 +18,12 @@ const inventoryCompensationSchema = new mongoose.Schema(
             type: Number,
             required: true,
             min: 1
+        },
+
+        status: {
+            type: String,
+            enum: ['RESERVED', 'COMMITTED', 'COMPENSATED'],
+            default: 'RESERVED'
         }
     },
     {
@@ -25,9 +31,9 @@ const inventoryCompensationSchema = new mongoose.Schema(
     }
 );
 
-const InventoryCompensation = mongoose.model(
-    'InventoryCompensation',
-    inventoryCompensationSchema
+const InventoryReservation = mongoose.model(
+    'InventoryReservation',
+    inventoryReservationSchema
 );
 
-module.exports = InventoryCompensation;
+module.exports = InventoryReservation;

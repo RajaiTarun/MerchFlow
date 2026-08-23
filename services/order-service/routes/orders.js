@@ -4,6 +4,8 @@ const axios = require('axios');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const OrderCommand = require('../models/OrderCommand');
+const { publishOrderPlaced } = require('../messaging/rabbitmq');
+const compensateInventory = require('../utils/compensateInventory');
 const IDEMPOTENCY_TTL = 86400;
 const LOCK_TTL_MS = 15000;
 const LOCK_PREFIX = 'lock:item:';
@@ -49,10 +51,15 @@ const releaseLock = async (redis, lockKey, token) => {
     }
 }
 
-
 module.exports = (pool, redis) => {
     router.post('/', async (req, res) => {
-        const { catalogItemId, quantity = 1, selectedSize } = req.body;
+        const {
+            catalogItemId,
+            quantity = 1,
+            selectedSize,
+            mockCardNumber,
+        } = req.body;
+
         if (!catalogItemId) {
             return res.status(400).json({
                 error: 'catalogItemId is required'
@@ -83,6 +90,7 @@ module.exports = (pool, redis) => {
 
         const lockKey = `${LOCK_PREFIX}${catalogItemId}`
         let lockToken = null;
+        let inventoryReserved = false;
 
         // let's check if the idempotency key is present or not
         const idempotencyKey = req.headers['idempotency-key'];
@@ -301,10 +309,13 @@ module.exports = (pool, redis) => {
             // so now let's decrement the stock
             const stockResponse = await axios.patch(
                 `http://localhost:${process.env.CATALOG_SERVICE_PORT || 3002}/${catalogItemId}/stock`,
-                { quantity }, {
+                { quantity, reservationId: idempotencyKey }, {
                 headers: internalHeaders
             }
             )
+
+            // Inventory reservation succeeded
+            inventoryReserved = true;
 
             const updatedItem = stockResponse.data.item;
             console.log(
@@ -313,21 +324,42 @@ module.exports = (pool, redis) => {
             // we have successfully decremented the stock so now lets save the order in postgresql
 
 
+            // ── AC1: Payment Evaluation ──
+            if (mockCardNumber === '4242') {
+                orderCommand.status = 'COMMITTED';
+                console.log(`[ORDER SERVICE] Payment successful for order ${idempotencyKey}`);
+            } else {
+                // We will handle failures in AC2/AC3. For AC1, we just assume success path if 4242.
+                // If it fails, for now we can just throw to trigger the catch block.
+                throw new Error('PAYMENT_FAILED');
+            }
+
             // saving this order record in PostgreSQL
             const result = await pool.query(`
-INSERT INTO orders(user_id, catalog_item_id, selected_size, quantity, status) VALUES ($1, $2, $3, $4, $5) RETURNING *
+INSERT INTO orders(user_id, catalog_item_id, selected_size, quantity, status, idempotency_key) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *
 `, [
                 orderCommand.userId,
                 orderCommand.catalogItemId,
                 orderCommand.selectedSize,
                 orderCommand.quantity,
-                orderCommand.status
-            ])
+                orderCommand.status,
+                orderCommand.idempotencyKey
+            ]);
+
+            // ── AC1: Commit Reservation in Catalog ──
+            await axios.patch(
+                `http://localhost:${process.env.CATALOG_SERVICE_PORT || 3002}/${catalogItemId}/reservation/commit`,
+                { reservationId: idempotencyKey },
+                { headers: internalHeaders }
+            );
+            console.log(`[ORDER SERVICE] Catalog reservation committed for ${idempotencyKey}`);
 
             const orderResponse = {
                 message: 'Order placed successfully',
                 order: result.rows[0]
             };
+
+            await publishOrderPlaced(result.rows[0]);
 
             // ── ORD-402: Step 4 — Mark key as SUCCESS and cache the response ─
             try {
@@ -345,12 +377,33 @@ INSERT INTO orders(user_id, catalog_item_id, selected_size, quantity, status) VA
 
             return res.status(201).json(orderResponse);
         } catch (err) {
+
+            // ── AC2 / AC3: Compensate inventory if it was already reserved ──
+            if (inventoryReserved) {
+                const compensationResult = await compensateInventory({
+                    catalogItemId,
+                    reservationId: idempotencyKey,
+                    internalHeaders
+                });
+
+                if (!compensationResult.success) {
+                    console.error(
+                        `[ORDER SERVICE] CRITICAL: Inventory compensation failed after retries: reservation=${idempotencyKey}`
+                    );
+                }
+            }
+
+            // Remove PROCESSING state from Valkey
             try {
                 await redis.del(valkeyKey);
             } catch (redisErr) {
-                console.error('[ORDER SERVICE] Failed to delete PROCESSING key on error:', redisErr.message);
+                console.error(
+                    '[ORDER SERVICE] Failed to delete PROCESSING key on error:',
+                    redisErr.message
+                );
             }
-            // Handle axios errors from inter-service calls
+
+            // Handle out-of-stock response
             if (
                 err.response?.status === 409 &&
                 err.response?.data?.error === 'OUT_OF_STOCK'
@@ -359,14 +412,29 @@ INSERT INTO orders(user_id, catalog_item_id, selected_size, quantity, status) VA
                     error: 'OUT_OF_STOCK'
                 });
             }
+
+            // Payment failure
+            if (err.message === 'PAYMENT_FAILED') {
+                return res.status(400).json({
+                    error: 'PAYMENT_FAILED'
+                });
+            }
+
+            // Handle downstream service errors
             if (err.response) {
-                // The downstream service responded with an error
                 return res.status(err.response.status).json({
                     error: `Downstream error: ${err.response.data?.error || 'Unknown error'}`
                 });
             }
-            console.error('[ORDER SERVICE] Checkout error:', err.message);
-            return res.status(500).json({ error: 'Internal server error' });
+
+            console.error(
+                '[ORDER SERVICE] Checkout error:',
+                err.message
+            );
+
+            return res.status(500).json({
+                error: 'Internal server error'
+            });
         } finally {
             if (lockToken) {
                 await releaseLock(redis, lockKey, lockToken);
