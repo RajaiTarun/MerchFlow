@@ -359,7 +359,20 @@ INSERT INTO orders(user_id, catalog_item_id, selected_size, quantity, status, id
                 order: result.rows[0]
             };
 
-            await publishOrderPlaced(result.rows[0]);
+            const orderEvent = {
+                ...result.rows[0],
+                studentEmail: decoded.email,
+                itemName: item.name
+            }
+
+            // we are now doing fire and forget instead of awaiting on the response of event published or not
+            publishOrderPlaced(orderEvent)
+                .catch(err => {
+                    console.error(
+                        '[ORDER SERVICE] Failed to publish OrderPlaced event:',
+                        err.message
+                    );
+                });
 
             // ── ORD-402: Step 4 — Mark key as SUCCESS and cache the response ─
             try {
