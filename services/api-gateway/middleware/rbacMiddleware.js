@@ -24,8 +24,15 @@ const requireRoles = (...allowedRoles) => {
 }
 
 const injectClubId = (req, res, next) => {
-    if (req.user && req.user.clubId) {
-        req.headers['x-club-id'] = req.user.clubId;
+    if (req.user) {
+        // Trusted, gateway-derived role — downstream services use this to decide
+        // whether a request may supply its own clubId (SUPER_ADMIN) or must use
+        // the one tied to their account (CLUB_ADMIN). Never sourced from the client directly.
+        req.headers['x-user-role'] = req.user.role;
+
+        if (req.user.clubId) {
+            req.headers['x-club-id'] = req.user.clubId;
+        }
     }
     return next();
 }

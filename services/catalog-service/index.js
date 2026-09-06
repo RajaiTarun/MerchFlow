@@ -2,6 +2,7 @@ require('dotenv').config({ path: '../../.env' });
 const express = require('express');
 const mongoose = require('mongoose');
 const catalogRoutes = require('./routes/catalog');
+const { connectRabbitMQ } = require('./messaging/rabbitmq');
 
 // mongoose is an ODM object data modelling library
 // node -> mongoose -> mongo db
@@ -82,5 +83,12 @@ const startServer = async () => {
 }
 
 startServer();
+
+// Same fire-and-forget startup pattern order-service uses — a slow/unavailable
+// broker at boot shouldn't block catalog-service from serving requests.
+connectRabbitMQ()
+    .catch(err => {
+        console.error('[CATALOG SERVICE][RABBITMQ] Startup connection failed:', err.message);
+    });
 
 // mongo db also does pooling but instead of setting it up explicitly the mongoose driver does it internally

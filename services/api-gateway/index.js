@@ -44,6 +44,21 @@ const ordersProxy = createProxyMiddleware({
     }
 });
 
+// Dedicated proxy for the role-promotion route. It's mounted via app.put() with
+// an exact path (not app.use() prefix-mounting), so Express does NOT strip
+// '/api/v1/users' from req.url the way it does for the userProxy mount below —
+// pathRewrite does that stripping here instead, so user-service still sees /:userId/role.
+const userRoleProxy = createProxyMiddleware({
+    target: 'http://localhost:3001',
+    changeOrigin: true,
+    pathRewrite: { '^/api/v1/users': '' },
+    on: {
+        proxyReq: (proxyReq) => {
+            proxyReq.setHeader('X-Internal-Service-Key', process.env.INTERNAL_SERVICE_KEY);
+        }
+    }
+});
+
 // creating a new express application and assigning PORT to the api gateway
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -55,10 +70,37 @@ app.use(cors());
 
 
 // proxies
+// Registered before the general '/api/v1/users' proxy so this SUPER_ADMIN-only
+// route is checked first — app.use() below would otherwise swallow every method
+// (including PUT) on that prefix before this route is ever reached.
+app.put('/api/v1/users/:userId/role', authMiddleware, requireRoles('SUPER_ADMIN'), userRoleProxy);
 app.use('/api/v1/users', userProxy);
-app.use('/api/v1/catalog', authMiddleware, catalogRateLimiter, injectClubId, catalogProxy);
-app.use('/api/v1/orders', authMiddleware, ordersRateLimiter, ordersProxy);
+// Catalog mutation routes (item creation, delivery-slot updates) are restricted
+// to CLUB_ADMIN (SUPER_ADMIN is always allowed through requireRoles()). Every
+// other catalog route — GET listing, GET /:id, the inventory PATCH endpoints —
+// must keep working for any authenticated user, so this check is scoped to
+// exactly these routes rather than the whole prefix. Per-item club ownership
+// (a Club Admin may only touch their own club's product) can't be checked here
+// since the gateway doesn't know which club owns which Mongo item — catalog-service
+// does that finer check itself using the x-club-id header injectClubId sets below.
+const CATALOG_MUTATION_ROUTES = [
+    { method: 'POST', pattern: /^\/$/ },
+    { method: 'PUT', pattern: /^\/[^/]+\/delivery-slot$/ }
+];
 
+const requireClubAdminForCreate = (req, res, next) => {
+    const isMutation = CATALOG_MUTATION_ROUTES.some(
+        route => route.method === req.method && route.pattern.test(req.path)
+    );
+
+    if (isMutation) {
+        return requireRoles('CLUB_ADMIN')(req, res, next);
+    }
+    return next();
+};
+
+app.use('/api/v1/catalog', authMiddleware, catalogRateLimiter, requireClubAdminForCreate, injectClubId, catalogProxy);
+app.use('/api/v1/orders', authMiddleware, ordersRateLimiter, ordersProxy);
 
 app.use(express.json()); // basically this parses the user sent data from raw json to javascript object and if we don't use this and then do req.body the it will return undefined
 app.use(mongoSanitize());

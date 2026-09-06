@@ -10,6 +10,7 @@ const StudentProfileBuilder = require('../models/StudentProfileBuilder');
 
 const DOMAIN_REGEX = /^[a-zA-Z0-9._%+-]+@students\.iiit\.ac\.in$/;
 const SALT_ROUNDS = 12;
+const VALID_ROLES = ['STUDENT', 'CLUB_ADMIN', 'SUPER_ADMIN'];
 
 module.exports = (pool) => {
     router.post('/register', async (req, res) => {
@@ -237,5 +238,63 @@ module.exports = (pool) => {
             return res.status(500).json({ error: 'Internal server error' });
         }
     })
+
+    // Promotes an existing user to a new role (e.g. STUDENT -> CLUB_ADMIN).
+    // Only reachable via the API Gateway's SUPER_ADMIN-gated proxy route —
+    // this service trusts the gateway to have already enforced that.
+    router.put('/:userId/role', async (req, res) => {
+        const { userId } = req.params;
+        const { role, club_id } = req.body;
+
+        if (!role || !VALID_ROLES.includes(role)) {
+            return res.status(400).json({
+                error: `role must be one of: ${VALID_ROLES.join(', ')}`
+            })
+        }
+
+        if (role === 'CLUB_ADMIN' && !club_id) {
+            return res.status(400).json({
+                error: 'club_id is required when promoting to CLUB_ADMIN'
+            })
+        }
+
+        try {
+            if (role === 'CLUB_ADMIN') {
+                const club = await pool.query('SELECT id FROM clubs WHERE id = $1', [club_id]);
+
+                if (club.rows.length === 0) {
+                    return res.status(400).json({
+                        error: 'club_id does not reference an existing club'
+                    })
+                }
+            }
+
+            // Only CLUB_ADMIN carries a club_id — every other role clears it.
+            const resolvedClubId = role === 'CLUB_ADMIN' ? club_id : null;
+
+            const result = await pool.query(
+                `UPDATE users
+                 SET role = $1, club_id = $2
+                 WHERE id = $3
+                 RETURNING id, email, full_name, role, club_id`,
+                [role, resolvedClubId, userId]
+            );
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({
+                    error: 'User not found'
+                })
+            }
+
+            return res.status(200).json({
+                message: 'User promoted to club admin successfully',
+                user: result.rows[0]
+            })
+        } catch (err) {
+            console.error('[USER SERVICE] Role update error:', err.message);
+            return res.status(500).json({ error: 'Internal server error' });
+        }
+    })
+
     return router;
 }

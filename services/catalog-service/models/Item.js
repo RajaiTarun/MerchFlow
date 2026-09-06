@@ -35,6 +35,11 @@ const itemSchema = new mongoose.Schema({
         type: [String],
         default: []
         // for mugs, accessories, etc we keep it empty and for apparels we can fill it
+    },
+    deliverySlot: {
+        date: { type: String },
+        startTime: { type: String },
+        endTime: { type: String }
     }
 },
     {

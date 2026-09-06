@@ -458,5 +458,27 @@ INSERT INTO orders(user_id, catalog_item_id, selected_size, quantity, status, id
         }
 
     })
+
+    // Internal, service-to-service only (protected by internalAuthMiddleware in
+    // index.js, same as every other route on this service) — used by
+    // Notification Service to find who to notify about a delivery-slot change.
+    router.get('/by-item/:catalogItemId/users', async (req, res) => {
+        const { catalogItemId } = req.params;
+
+        try {
+            const result = await pool.query(
+                'SELECT DISTINCT user_id FROM orders WHERE catalog_item_id = $1',
+                [catalogItemId]
+            );
+
+            return res.status(200).json({
+                userIds: result.rows.map(row => row.user_id)
+            });
+        } catch (err) {
+            console.error('[ORDER SERVICE] by-item users lookup error:', err.message);
+            return res.status(500).json({ error: 'Internal server error' });
+        }
+    })
+
     return router;
 }

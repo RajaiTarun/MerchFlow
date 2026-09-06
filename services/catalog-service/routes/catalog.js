@@ -2,21 +2,61 @@ const express = require('express');
 const mongoose = require('mongoose');
 const router = express.Router();
 const redis = require('../cache/valkey');
+const pgPool = require('../db/postgres');
 const Item = require('../models/Item');
 const InventoryCompensation = require('../models/InventoryCompensation');
 const InventoryReservation = require('../models/InventoryReservation');
 const MerchandiseFactory = require('../factories/MerchandiseFactory');
+const { publishDeliverySlotUpdated } = require('../messaging/rabbitmq');
 const PAGE_SIZE = 10;
 const CACHE_KEY = 'catalog:feed:page:1';
 const CACHE_TTL = 60; // seconds
+const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+const TIME_REGEX = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 router.post('/', async (req, res) => {
     const { type, ...rest } = req.body;
-    const clubId = req.headers['x-club-id'];
 
-    if (!clubId) {
+    // x-user-role / x-club-id are set by the API Gateway from the verified JWT
+    // (see injectClubId) — never taken from the client directly.
+    const role = req.headers['x-user-role'];
+    let clubId;
+
+    if (role === 'CLUB_ADMIN') {
+        // Club Admins are locked to their own club — any clubId in the request
+        // body is ignored below in favor of this header-derived value.
+        clubId = req.headers['x-club-id'];
+
+        if (!clubId) {
+            return res.status(403).json({
+                error: 'Club ID not found. Only club admins are allowed to publish items'
+            })
+        }
+    } else if (role === 'SUPER_ADMIN') {
+        // Super Admins aren't tied to one club, so they must name the target club.
+        clubId = rest.clubId;
+
+        if (!clubId) {
+            return res.status(400).json({
+                error: 'clubId is required in the request body when publishing as Super Admin'
+            })
+        }
+
+        try {
+            const club = await pgPool.query('SELECT id FROM clubs WHERE id = $1', [clubId]);
+            if (club.rows.length === 0) {
+                return res.status(404).json({
+                    error: 'clubId does not reference an existing club'
+                })
+            }
+        } catch (err) {
+            return res.status(400).json({
+                error: 'clubId is not a valid club identifier'
+            })
+        }
+    } else {
         return res.status(403).json({
-            error: 'Club ID not found. Only club admins are allowed to publish items'
+            error: 'Only club admins or super admins are allowed to publish items'
         })
     }
 
@@ -27,6 +67,7 @@ router.post('/', async (req, res) => {
     }
 
     try {
+        // clubId placed last so it always wins over any rest.clubId the client sent.
         const domainItem = MerchandiseFactory.createItem(type, { ...rest, clubId });
 
         const item = new Item(domainItem.toData());
@@ -43,6 +84,92 @@ router.post('/', async (req, res) => {
             })
         }
         console.error('[CATALOG SERVICE] Create item error:', err.message);
+        return res.status(500).json({
+            error: 'Internal server error'
+        })
+    }
+})
+
+router.put('/:itemId/delivery-slot', async (req, res) => {
+    const { itemId } = req.params;
+    const { date, startTime, endTime } = req.body;
+
+    // Same trusted, gateway-derived headers as POST / above.
+    const role = req.headers['x-user-role'];
+    const clubId = req.headers['x-club-id'];
+
+    if (role !== 'CLUB_ADMIN' && role !== 'SUPER_ADMIN') {
+        return res.status(403).json({
+            error: 'Only club admins or super admins are allowed to update delivery slots'
+        })
+    }
+
+    if (!date || !DATE_REGEX.test(date)) {
+        return res.status(400).json({
+            error: 'date is required in YYYY-MM-DD format'
+        })
+    }
+
+    if (!startTime || !TIME_REGEX.test(startTime)) {
+        return res.status(400).json({
+            error: 'startTime is required in HH:MM (24h) format'
+        })
+    }
+
+    if (!endTime || !TIME_REGEX.test(endTime)) {
+        return res.status(400).json({
+            error: 'endTime is required in HH:MM (24h) format'
+        })
+    }
+
+    if (endTime <= startTime) {
+        return res.status(400).json({
+            error: 'endTime must be after startTime'
+        })
+    }
+
+    try {
+        const item = await Item.findById(itemId);
+
+        if (!item) {
+            return res.status(404).json({
+                error: 'Item not found'
+            })
+        }
+
+        // Club Admins may only touch their own club's products; Super Admin bypasses this.
+        if (role === 'CLUB_ADMIN' && item.clubId !== clubId) {
+            return res.status(403).json({
+                error: 'You can only update delivery slots for your own club\'s products'
+            })
+        }
+
+        const deliverySlot = { date, startTime, endTime };
+        item.deliverySlot = deliverySlot;
+        await item.save();
+
+        // Published only after the DB update above has already succeeded, and
+        // fire-and-forget (not awaited) — same convention as publishOrderPlaced
+        // in order-service: a broker hiccup must not fail this HTTP response.
+        publishDeliverySlotUpdated({
+            catalogItemId: item._id.toString(),
+            itemName: item.name,
+            deliverySlot
+        }).catch(err => {
+            console.error('[CATALOG SERVICE] Failed to publish delivery.slot.updated event:', err.message);
+        });
+
+        return res.status(200).json({
+            message: 'Delivery slot updated successfully',
+            item
+        })
+    } catch (err) {
+        if (err.name === 'CastError') {
+            return res.status(400).json({
+                error: 'Invalid item id'
+            })
+        }
+        console.error('[CATALOG SERVICE] Delivery slot update error:', err.message);
         return res.status(500).json({
             error: 'Internal server error'
         })
