@@ -7,7 +7,6 @@ require('dotenv').config({ path: '../../.env' });
 const express = require('express');
 const cors = require('cors');
 const { createProxyMiddleware } = require('http-proxy-middleware');
-const mongoSanitize = require('express-mongo-sanitize');
 const { catalogRateLimiter, ordersRateLimiter } = require('./middleware/rateLimiter');
 const authMiddleware = require('./middleware/authMiddleware');
 const { requireRoles, injectClubId } = require('./middleware/rbacMiddleware');
@@ -15,6 +14,16 @@ const { requireRoles, injectClubId } = require('./middleware/rbacMiddleware');
 
 // creating proxy middleware, basically routes the requests to their respective microservice
 const userProxy = createProxyMiddleware({
+    target: 'http://localhost:3001',
+    changeOrigin: true,
+    on: {
+        proxyReq: (proxyReq) => {
+            proxyReq.setHeader('X-Internal-Service-Key', process.env.INTERNAL_SERVICE_KEY);
+        }
+    }
+});
+
+const clubsProxy = createProxyMiddleware({
     target: 'http://localhost:3001',
     changeOrigin: true,
     on: {
@@ -36,6 +45,16 @@ const catalogProxy = createProxyMiddleware({
 
 const ordersProxy = createProxyMiddleware({
     target: 'http://localhost:3003',
+    changeOrigin: true,
+    on: {
+        proxyReq: (proxyReq) => {
+            proxyReq.setHeader('X-Internal-Service-Key', process.env.INTERNAL_SERVICE_KEY);
+        }
+    }
+});
+
+const notificationsProxy = createProxyMiddleware({
+    target: 'http://localhost:3004',
     changeOrigin: true,
     on: {
         proxyReq: (proxyReq) => {
@@ -74,7 +93,33 @@ app.use(cors());
 // route is checked first — app.use() below would otherwise swallow every method
 // (including PUT) on that prefix before this route is ever reached.
 app.put('/api/v1/users/:userId/role', authMiddleware, requireRoles('SUPER_ADMIN'), userRoleProxy);
-app.use('/api/v1/users', userProxy);
+// /register and /login must stay public (no JWT exists yet at that point), so
+// auth is scoped to exactly these two "act on my own account" routes rather
+// than the whole /api/v1/users prefix.
+const PROFILE_MUTATION_ROUTES = [
+    { method: 'PUT', pattern: /^\/profile$/ },
+    { method: 'PUT', pattern: /^\/size$/ }
+];
+
+const requireAuthForProfileMutation = (req, res, next) => {
+    const needsAuth = PROFILE_MUTATION_ROUTES.some(
+        route => route.method === req.method && route.pattern.test(req.path)
+    );
+
+    if (!needsAuth) {
+        return next();
+    }
+
+    return authMiddleware(req, res, () => {
+        // Trusted, gateway-derived identity from the verified JWT — never taken
+        // from the request body, so a caller can't act on another user's account.
+        req.headers['x-user-id'] = req.user.sub;
+        next();
+    });
+};
+
+app.use('/api/v1/users', requireAuthForProfileMutation, userProxy);
+app.use('/api/v1/clubs', authMiddleware, clubsProxy);
 // Catalog mutation routes (item creation, delivery-slot updates) are restricted
 // to CLUB_ADMIN (SUPER_ADMIN is always allowed through requireRoles()). Every
 // other catalog route — GET listing, GET /:id, the inventory PATCH endpoints —
@@ -100,10 +145,34 @@ const requireClubAdminForCreate = (req, res, next) => {
 };
 
 app.use('/api/v1/catalog', authMiddleware, catalogRateLimiter, requireClubAdminForCreate, injectClubId, catalogProxy);
-app.use('/api/v1/orders', authMiddleware, ordersRateLimiter, ordersProxy);
+
+// GET /club (a club's own orders) and PATCH /:orderId/status (marking an
+// order DELIVERED) are restricted to CLUB_ADMIN (SUPER_ADMIN always passes
+// through requireRoles()). Every other orders route — checkout, "my orders",
+// GET /:id — stays open to any authenticated user, so this check is scoped to
+// exactly these routes, same pattern as requireClubAdminForCreate above.
+// Per-club ownership (a Club Admin may only touch their own club's orders) is
+// enforced by order-service itself using the x-club-id header injectClubId sets.
+const ORDER_ADMIN_ROUTES = [
+    { method: 'GET', pattern: /^\/club$/ },
+    { method: 'PATCH', pattern: /^\/[^/]+\/status$/ }
+];
+
+const requireClubAdminForOrders = (req, res, next) => {
+    const isAdminRoute = ORDER_ADMIN_ROUTES.some(
+        route => route.method === req.method && route.pattern.test(req.path)
+    );
+
+    if (isAdminRoute) {
+        return requireRoles('CLUB_ADMIN')(req, res, next);
+    }
+    return next();
+};
+
+app.use('/api/v1/orders', authMiddleware, ordersRateLimiter, requireClubAdminForOrders, injectClubId, ordersProxy);
+app.use('/api/v1/notifications', authMiddleware, notificationsProxy);
 
 app.use(express.json()); // basically this parses the user sent data from raw json to javascript object and if we don't use this and then do req.body the it will return undefined
-app.use(mongoSanitize());
 
 // routes
 

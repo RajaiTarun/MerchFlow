@@ -6,9 +6,22 @@ require('dotenv').config({ path: '../../.env' });
 
 const NotificationBroadcaster = require('./observers/NotificationBroadcaster');
 const InAppNotificationStrategy = require('./strategies/InAppNotificationStrategy');
+const notificationRoutes = require('./routes/notifications');
 
 const app = express();
 const PORT = process.env.NOTIFICATION_SERVICE_PORT || 3004;
+
+// Same convention as catalog/order/user-service: only the gateway (or another
+// trusted internal service) may reach this service directly.
+const internalAuthMiddleware = (req, res, next) => {
+    if (req.headers['x-internal-service-key'] && req.headers['x-internal-service-key'] === process.env.INTERNAL_SERVICE_KEY) {
+        return next();
+    }
+
+    res.status(403).json({
+        error: 'forbidden'
+    })
+}
 
 const EXCHANGE_NAME = 'order.events';
 const EXCHANGE_TYPE = 'topic';
@@ -17,7 +30,7 @@ const QUEUE_NAME = 'notification_queue';
 // intentionally chosen architecture: Notification Service resolves recipients
 // itself via a direct HTTP call to Order Service, rather than Order Service
 // becoming a second RabbitMQ consumer/publisher.
-const ROUTING_KEYS = ['order.placed', 'delivery.slot.updated'];
+const ROUTING_KEYS = ['order.placed', 'delivery.slot.updated', 'order.delivered'];
 
 const ORDER_SERVICE_URL = `http://localhost:${process.env.ORDER_SERVICE_PORT || 3003}`;
 
@@ -47,6 +60,26 @@ async function handleOrderPlaced(message) {
         metadata: {
             itemName: order.itemName,
             studentEmail: order.studentEmail,
+            quantity: order.quantity,
+            selectedSize: order.selected_size
+        }
+    });
+}
+
+async function handleOrderDelivered(message) {
+    const order = message.order;
+
+    console.log(
+        `[NOTIFICATION SERVICE] OrderDelivered received: orderId=${order.id}, item=${order.itemName}`
+    );
+
+    await broadcaster.notify({
+        userId: order.user_id,
+        orderId: order.id,
+        type: 'ORDER_DELIVERED',
+        message: `Your order for ${order.itemName} has been delivered successfully.`,
+        metadata: {
+            itemName: order.itemName,
             quantity: order.quantity,
             selectedSize: order.selected_size
         }
@@ -159,6 +192,8 @@ const connectRabbitMQ = async () => {
                     // business logic lives in the broadcaster's registered strategies.
                     if (message.event === 'OrderPlaced') {
                         await handleOrderPlaced(message);
+                    } else if (message.event === 'OrderDelivered') {
+                        await handleOrderDelivered(message);
                     } else if (message.event === 'delivery.slot.updated') {
                         await handleDeliverySlotUpdated(message);
                     } else {
@@ -182,6 +217,10 @@ const connectRabbitMQ = async () => {
         throw err;
     }
 }
+
+app.use(express.json());
+app.use(internalAuthMiddleware);
+app.use('/', notificationRoutes(pool));
 
 app.get('/health', (req, res) => {
     res.status(200).json({

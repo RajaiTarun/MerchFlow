@@ -14,6 +14,18 @@ const CACHE_TTL = 60; // seconds
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_REGEX = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
+// Called after any write that could change what the cached unfiltered first
+// page looks like (new item, delivery-slot update) — non-fatal, same as the
+// cache read/write below, since the DB write it follows has already succeeded.
+const invalidateCatalogCache = async () => {
+    try {
+        await redis.del(CACHE_KEY);
+        console.log('[CATALOG SERVICE] Invalidated cached page 1 after catalog change');
+    } catch (err) {
+        console.error('[CATALOG SERVICE] Failed to invalidate Valkey cache:', err.message);
+    }
+};
+
 router.post('/', async (req, res) => {
     const { type, ...rest } = req.body;
 
@@ -72,6 +84,7 @@ router.post('/', async (req, res) => {
 
         const item = new Item(domainItem.toData());
         await item.save();
+        await invalidateCatalogCache();
 
         return res.status(201).json({
             message: 'Item published successfully',
@@ -147,6 +160,7 @@ router.put('/:itemId/delivery-slot', async (req, res) => {
         const deliverySlot = { date, startTime, endTime };
         item.deliverySlot = deliverySlot;
         await item.save();
+        await invalidateCatalogCache();
 
         // Published only after the DB update above has already succeeded, and
         // fire-and-forget (not awaited) — same convention as publishOrderPlaced
@@ -180,8 +194,12 @@ router.get('/', async (req, res) => {
     const { cursor, type, clubId } = req.query;
     // becuase we dont have cursor for first page
     const isFirstPage = !cursor;
+    // only cache the truly unfiltered first page — a filtered request (type/clubId
+    // present) always hits MongoDB directly so it can't clobber or read the
+    // unfiltered cache entry
+    const shouldUseCache = isFirstPage && !type && !clubId;
 
-    if (isFirstPage) {
+    if (shouldUseCache) {
         // let's see if it exists in cache
         try {
             const cached = await redis.get(CACHE_KEY);
@@ -225,7 +243,7 @@ router.get('/', async (req, res) => {
             items: pageItems
         }
 
-        if (isFirstPage) {
+        if (shouldUseCache) {
             try {
                 await redis.set(CACHE_KEY, JSON.stringify(responsePayload), 'EX', CACHE_TTL);
                 console.log('[CATALOG SERVICE] Page 1 cached in Valkey for 60s')

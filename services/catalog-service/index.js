@@ -22,21 +22,11 @@ const internalAuthMiddleware = (req, res, next) => {
 
 app.use(express.json());
 app.use(internalAuthMiddleware);
-app.use('/', catalogRoutes);
 
-// creating a function to connect to mongo db and as connecting to db takes time and might also sometimes fail, so we are using async await + try catch
-const connectDB = async () => {
-    try {
-        await mongoose.connect(process.env.MONGODB_URI);
-        console.log('[CATALOG SERVICE] Mongo DB connected');
-    } catch (err) {
-        console.error('[CATALOG SERVICE] Mongo DB connection error', err);
-        throw err;
-    }
-};
-
-
-// route to get health
+// Registered before catalogRoutes below: that router's GET /:id would
+// otherwise match '/health' too (':id' matches any single path segment,
+// including the literal string "health"), and since Express tries routers in
+// registration order, catalogRoutes would win and try Item.findById("health").
 app.get('/health', (req, res) => {
     const isConnected = mongoose.connection.readyState === 1;
     if (isConnected) {
@@ -55,6 +45,19 @@ app.get('/health', (req, res) => {
         })
     }
 })
+
+app.use('/', catalogRoutes);
+
+// creating a function to connect to mongo db and as connecting to db takes time and might also sometimes fail, so we are using async await + try catch
+const connectDB = async () => {
+    try {
+        await mongoose.connect(process.env.MONGODB_URI);
+        console.log('[CATALOG SERVICE] Mongo DB connected');
+    } catch (err) {
+        console.error('[CATALOG SERVICE] Mongo DB connection error', err);
+        throw err;
+    }
+};
 
 // basically we are starting the server and once the server has started we establish connection with mongo db
 

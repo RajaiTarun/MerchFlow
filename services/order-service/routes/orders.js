@@ -4,7 +4,7 @@ const axios = require('axios');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const OrderCommand = require('../models/OrderCommand');
-const { publishOrderPlaced } = require('../messaging/rabbitmq');
+const { publishOrderPlaced, publishOrderDelivered } = require('../messaging/rabbitmq');
 const compensateInventory = require('../utils/compensateInventory');
 const IDEMPOTENCY_TTL = 86400;
 const LOCK_TTL_MS = 15000;
@@ -50,6 +50,20 @@ const releaseLock = async (redis, lockKey, token) => {
         console.error('[ORDER SERVICE] Failed to release lock:', err.message);
     }
 }
+
+// Same identity source as POST / below: the gateway's authMiddleware has
+// already verified this JWT's signature before proxying the request here, so
+// a plain decode (no re-verification) is enough to read the subject claim.
+const getUserIdFromAuthHeader = (req) => {
+    const authHeader = req.headers['authorization'];
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return null;
+    }
+
+    const token = authHeader.split(' ')[1];
+    const decoded = jwt.decode(token);
+    return decoded?.sub || null;
+};
 
 module.exports = (pool, redis) => {
     router.post('/', async (req, res) => {
@@ -280,6 +294,7 @@ module.exports = (pool, redis) => {
             const orderCommand = new OrderCommand({
                 userId,
                 catalogItemId,
+                clubId: item.clubId,
                 selectedSize: resolvedSize, // resolvedSize = frontend pick OR auto-injected preferred size
                 quantity,
                 idempotencyKey
@@ -336,10 +351,11 @@ module.exports = (pool, redis) => {
 
             // saving this order record in PostgreSQL
             const result = await pool.query(`
-INSERT INTO orders(user_id, catalog_item_id, selected_size, quantity, status, idempotency_key) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *
+INSERT INTO orders(user_id, catalog_item_id, club_id, selected_size, quantity, status, idempotency_key) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *
 `, [
                 orderCommand.userId,
                 orderCommand.catalogItemId,
+                orderCommand.clubId,
                 orderCommand.selectedSize,
                 orderCommand.quantity,
                 orderCommand.status,
@@ -459,6 +475,81 @@ INSERT INTO orders(user_id, catalog_item_id, selected_size, quantity, status, id
 
     })
 
+    // "My orders" — scoped to the caller via the verified JWT, never a query param.
+    router.get('/', async (req, res) => {
+        const userId = getUserIdFromAuthHeader(req);
+        if (!userId) {
+            return res.status(401).json({
+                error: 'Authorization token required'
+            })
+        }
+
+        try {
+            const result = await pool.query(
+                `SELECT id, catalog_item_id, selected_size, quantity, status, created_at
+                 FROM orders WHERE user_id = $1 ORDER BY created_at DESC`,
+                [userId]
+            );
+
+            return res.status(200).json({ orders: result.rows });
+        } catch (err) {
+            console.error('[ORDER SERVICE] Get orders error:', err.message);
+            return res.status(500).json({ error: 'Internal server error' });
+        }
+    })
+
+    // Club Admin's/Super Admin's view of a club's orders. Registered before
+    // GET /:id — both are single-segment paths, and Express matches whichever
+    // is registered first, so this literal route must come before the generic
+    // '/:id' pattern or a request to '/club' would be swallowed by it (id='club').
+    router.get('/club', async (req, res) => {
+        // Trusted, gateway-derived headers (see injectClubId) — never taken
+        // from the request directly.
+        const role = req.headers['x-user-role'];
+        let clubId;
+
+        if (role === 'CLUB_ADMIN') {
+            // Club Admins are locked to their own club — any clubId in the
+            // query string is ignored in favor of this header-derived value.
+            clubId = req.headers['x-club-id'];
+
+            if (!clubId) {
+                return res.status(403).json({
+                    error: 'Club ID not found. Only club admins are allowed to view club orders'
+                })
+            }
+        } else if (role === 'SUPER_ADMIN') {
+            // Super Admins aren't tied to one club, so they must name the target club.
+            clubId = req.query.clubId;
+
+            if (!clubId) {
+                return res.status(400).json({
+                    error: 'clubId query parameter is required when viewing as Super Admin'
+                })
+            }
+        } else {
+            return res.status(403).json({
+                error: 'Only club admins or super admins are allowed to view club orders'
+            })
+        }
+
+        try {
+            const result = await pool.query(
+                `SELECT id, user_id, catalog_item_id, selected_size, quantity, status, created_at
+                 FROM orders WHERE club_id = $1 ORDER BY created_at DESC`,
+                [clubId]
+            );
+
+            return res.status(200).json({ orders: result.rows });
+        } catch (err) {
+            if (err.code === '22P02') {
+                return res.status(400).json({ error: 'Invalid club id' });
+            }
+            console.error('[ORDER SERVICE] Get club orders error:', err.message);
+            return res.status(500).json({ error: 'Internal server error' });
+        }
+    })
+
     // Internal, service-to-service only (protected by internalAuthMiddleware in
     // index.js, same as every other route on this service) — used by
     // Notification Service to find who to notify about a delivery-slot change.
@@ -476,6 +567,138 @@ INSERT INTO orders(user_id, catalog_item_id, selected_size, quantity, status, id
             });
         } catch (err) {
             console.error('[ORDER SERVICE] by-item users lookup error:', err.message);
+            return res.status(500).json({ error: 'Internal server error' });
+        }
+    })
+
+    // Single order detail — a caller may only view their own order.
+    router.get('/:id', async (req, res) => {
+        const userId = getUserIdFromAuthHeader(req);
+        if (!userId) {
+            return res.status(401).json({
+                error: 'Authorization token required'
+            })
+        }
+
+        const { id } = req.params;
+
+        try {
+            const result = await pool.query(
+                `SELECT id, user_id, catalog_item_id, selected_size, quantity, status, created_at
+                 FROM orders WHERE id = $1`,
+                [id]
+            );
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({ error: 'Order not found' });
+            }
+
+            const order = result.rows[0];
+
+            if (order.user_id !== userId) {
+                return res.status(403).json({ error: 'You are not authorized to view this order' });
+            }
+
+            return res.status(200).json({ order });
+        } catch (err) {
+            if (err.code === '22P02') {
+                // Postgres: invalid input syntax for type uuid
+                return res.status(400).json({ error: 'Invalid order id' });
+            }
+            console.error('[ORDER SERVICE] Get order by id error:', err.message);
+            return res.status(500).json({ error: 'Internal server error' });
+        }
+    })
+
+    // Marks an order DELIVERED. Club Admin may only touch their own club's
+    // orders; Super Admin bypasses that check — same ownership pattern as
+    // catalog-service's PUT /:itemId/delivery-slot.
+    router.patch('/:orderId/status', async (req, res) => {
+        const { orderId } = req.params;
+        const { status } = req.body;
+
+        // Trusted, gateway-derived headers (see injectClubId) — never taken
+        // from the request directly.
+        const role = req.headers['x-user-role'];
+        const clubId = req.headers['x-club-id'];
+
+        if (role !== 'CLUB_ADMIN' && role !== 'SUPER_ADMIN') {
+            return res.status(403).json({
+                error: 'Only club admins or super admins are allowed to update order status'
+            })
+        }
+
+        // Only DELIVERED is reachable through this endpoint for now — order
+        // cancellation was explicitly deferred, and every other status is set
+        // internally by the checkout flow itself, never by an admin action.
+        if (status !== 'DELIVERED') {
+            return res.status(400).json({
+                error: 'status must be DELIVERED'
+            })
+        }
+
+        try {
+            const orderResult = await pool.query(
+                `SELECT id, user_id, catalog_item_id, club_id, selected_size, quantity, status
+                 FROM orders WHERE id = $1`,
+                [orderId]
+            );
+
+            if (orderResult.rows.length === 0) {
+                return res.status(404).json({ error: 'Order not found' });
+            }
+
+            const order = orderResult.rows[0];
+
+            if (role === 'CLUB_ADMIN' && order.club_id !== clubId) {
+                return res.status(403).json({
+                    error: 'You can only update orders for your own club'
+                })
+            }
+
+            if (order.status !== 'COMMITTED') {
+                return res.status(400).json({
+                    error: `Order cannot be marked DELIVERED from its current status: ${order.status}`
+                })
+            }
+
+            const updateResult = await pool.query(
+                `UPDATE orders SET status = 'DELIVERED' WHERE id = $1
+                 RETURNING id, user_id, catalog_item_id, club_id, selected_size, quantity, status, created_at`,
+                [orderId]
+            );
+
+            const updatedOrder = updateResult.rows[0];
+
+            // Best-effort item name lookup for a friendlier notification message
+            // — a catalog-service hiccup here must not undo a status update that
+            // already succeeded in Postgres, so this is non-fatal.
+            let itemName = updatedOrder.catalog_item_id;
+            try {
+                const itemResponse = await axios.get(
+                    `http://localhost:${process.env.CATALOG_SERVICE_PORT || 3002}/${updatedOrder.catalog_item_id}`,
+                    { headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY } }
+                );
+                itemName = itemResponse.data.item.name;
+            } catch (err) {
+                console.error('[ORDER SERVICE] Failed to fetch item name for delivery notification:', err.message);
+            }
+
+            // Fire-and-forget, same convention as publishOrderPlaced in POST / above.
+            publishOrderDelivered({ ...updatedOrder, itemName })
+                .catch(err => {
+                    console.error('[ORDER SERVICE] Failed to publish OrderDelivered event:', err.message);
+                });
+
+            return res.status(200).json({
+                message: 'Order marked as delivered',
+                order: updatedOrder
+            });
+        } catch (err) {
+            if (err.code === '22P02') {
+                return res.status(400).json({ error: 'Invalid order id' });
+            }
+            console.error('[ORDER SERVICE] Update order status error:', err.message);
             return res.status(500).json({ error: 'Internal server error' });
         }
     })

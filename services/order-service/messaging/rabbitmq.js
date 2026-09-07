@@ -108,7 +108,44 @@ async function publishOrderPlaced(order) {
     return published;
 }
 
+// Function to publish the 'OrderDelivered' event, fired when a Club/Super
+// Admin marks an order as DELIVERED via PATCH /:orderId/status.
+async function publishOrderDelivered(order) {
+    const channel = await connectRabbitMQ();
+
+    const routingKey = 'order.delivered';
+
+    const message = {
+        event: 'OrderDelivered',
+        timestamp: new Date().toISOString(),
+        order
+    };
+
+    const published = channel.publish(
+        EXCHANGE_NAME,
+        routingKey,
+        Buffer.from(JSON.stringify(message)),
+        {
+            persistent: true,
+            contentType: 'application/json'
+        }
+    );
+
+    if (!published) {
+        console.warn(
+            '[RABBITMQ] Publish returned false (Write buffer full, experiencing backpressure)'
+        );
+    }
+
+    console.log(
+        `[RABBITMQ] Published OrderDelivered: orderId=${order.id}`
+    );
+
+    return published;
+}
+
 module.exports = {
     connectRabbitMQ,
-    publishOrderPlaced
+    publishOrderPlaced,
+    publishOrderDelivered
 };

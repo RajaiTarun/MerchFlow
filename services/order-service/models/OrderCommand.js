@@ -8,7 +8,7 @@
 const VALID_STATUSES = ['PLACED', 'COMMITTED', 'CANCELLED', 'PAYMENT_FAILED'];
 
 class OrderCommand {
-    constructor({ userId, catalogItemId, selectedSize, quantity = 1, status = 'PLACED', idempotencyKey }) {
+    constructor({ userId, catalogItemId, clubId, selectedSize, quantity = 1, status = 'PLACED', idempotencyKey }) {
         if (!userId) throw new Error('userId is required');
         if (!catalogItemId) throw new Error('catalogItemId is required');
         if (quantity < 1) throw new Error('quantity must be at least 1');
@@ -19,6 +19,7 @@ class OrderCommand {
 
         this.userId = userId;
         this.catalogItemId = catalogItemId;
+        this.clubId = clubId;          // denormalized from the catalog item, for club-scoped order queries
         this.selectedSize = selectedSize;
         this.quantity = quantity;
         this.status = status;          // set by caller based on payment outcome

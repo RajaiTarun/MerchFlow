@@ -3,6 +3,7 @@ const express = require('express');
 const { Pool } = require('pg'); // pg is postgresql driver for node basically node js -> pg -> postgres
 // and basically the dependency pg will have a lot more other things than Pool also but we only need Pool so we do destructing and import only Pool
 const authRoutes = require('./routes/auth');
+const clubRoutes = require('./routes/clubs');
 require('dotenv').config({ path: '../../.env' });
 
 const app = express();
@@ -27,6 +28,7 @@ const internalAuthMiddleware = (req, res, next) => {
 app.use(express.json());
 app.use(internalAuthMiddleware);
 app.use('/', authRoutes(pool));
+app.use('/', clubRoutes(pool));
 
 app.get('/health', async (req, res) => {
     try {

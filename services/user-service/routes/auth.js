@@ -61,10 +61,14 @@ module.exports = (pool) => {
     })
 
     router.put('/profile', async (req, res) => {
-        const { user_id, full_name, phone, hostel_block, preferred_size } = req.body;
+        // Trusted, gateway-derived identity from the verified JWT (see
+        // requireAuthForProfileMutation in api-gateway) — never taken from the
+        // request body, so a caller can't edit another user's profile.
+        const user_id = req.headers['x-user-id'];
+        const { full_name, phone, hostel_block, preferred_size } = req.body;
 
         if (!user_id) {
-            res.status(400).json({
+            return res.status(401).json({
                 error: 'user_id is required'
             })
         }
@@ -121,10 +125,17 @@ module.exports = (pool) => {
     })
 
     router.put('/size', async (req, res) => {
-        const { user_id, preferred_size } = req.body;
-        if (!user_id || !preferred_size) {
+        // Trusted, gateway-derived identity from the verified JWT — see PUT /profile above.
+        const user_id = req.headers['x-user-id'];
+        const { preferred_size } = req.body;
+        if (!user_id) {
+            return res.status(401).json({
+                error: 'user_id is required'
+            })
+        }
+        if (!preferred_size) {
             return res.status(400).json({
-                error: 'user_id and preferred_size are required'
+                error: 'preferred_size is required'
             })
         }
 
