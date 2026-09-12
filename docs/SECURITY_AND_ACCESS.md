@@ -56,11 +56,15 @@ Access routes are strictly gated by three operational tiers. Furthermore, **Club
 | Action / Endpoint | Student | Club Admin | Super Admin |
 | --- | --- | --- | --- |
 | **Browse Catalog** (`GET /api/v1/catalog`) | ✅ Allow | ✅ Allow | ✅ Allow |
-| **Manage Saved Size Profile** (`PUT /api/v1/users/size`) | ✅ Allow (Own) | ✅ Allow (Own) | ✅ Allow (Any) |
-| **Execute Checkout** (`POST /api/v1/orders`) | ✅ Allow | ❌ Deny | ❌ Deny |
+| **Manage Saved Size Profile** (`PUT /api/v1/users/profile`) | ✅ Allow (Own) | ✅ Allow (Own) | ✅ Allow (Own) |
+| **Execute Checkout** (`POST /api/v1/orders`) | ✅ Allow | ✅ Allow | ✅ Allow |
 | **Manage Merchandise & Caps** (`POST /api/v1/catalog`) | ❌ Deny | ✅ Allow (Own Club) | ✅ Allow (Any Club) |
-| **Broadcast Delivery Slots** (`POST /api/v1/notify`) | ❌ Deny | ✅ Allow (Own Club) | ✅ Allow (Global) |
-| **Manage Clubs & System Health** (`GET /health/detailed`) | ❌ Deny | ❌ Deny | ✅ Allow |
+| **Broadcast Delivery Slots** (`PUT /api/v1/catalog/:id/delivery-slot`) | ❌ Deny | ✅ Allow (Own Club) | ✅ Allow (Any Club) |
+| **Look Up a User by Email** (`GET /api/v1/users/lookup?email=`) | ❌ Deny | ❌ Deny | ✅ Allow |
+| **Promote a User to Club Admin** (`PUT /api/v1/users/:userId/role`) | ❌ Deny | ❌ Deny | ✅ Allow |
+| **Create a Club (+ assign its Club Admin)** (`POST /api/v1/clubs`) | ❌ Deny | ❌ Deny | ✅ Allow |
+
+**Revision note (2026-09-11):** this table previously denied Club Admin/Super Admin checkout and listed a `GET /health/detailed` "Manage Clubs & System Health" capability. Neither reflected the finalized project scope: **Club Admin and Super Admin are explicitly allowed to place orders** like any other authenticated user (there is no `STUDENT`-only checkout restriction, by design), and there is **no infrastructure-diagnostics endpoint** (`/health/detailed`, service-health aggregation, circuit-breaker status, or queue-depth monitoring) anywhere in this system — that capability was replaced with concrete application-level Super Admin actions: looking up a user by email, promoting a user to `CLUB_ADMIN`, and creating a club while assigning its admin. See §5 below for the endpoints these three rows correspond to.
 
 ---
 
@@ -116,5 +120,21 @@ To maintain security across both local development and production deployment wit
 ### 4.2 Inter-Service Communication Key
 
 When internal services communicate with each other (e.g., Order Service calling User Service to fetch a student's saved size profile), requests attach a shared environment secret in the header (`X-Internal-Service-Key`). Downstream services verify this header to ensure the request originated from an authentic internal microservice rather than a spoofed external source.
+
+Internal-only endpoints (e.g. Catalog Service's stock reservation/rollback/commit routes, Order Service's by-item user lookup used by Notification Service) are reachable only by another backend service presenting this key. They are **not** part of the public API surface and must never be called directly by a frontend client.
+
+---
+
+## 5. Super Admin Administration (replaces the earlier "Diagnostics Panel" concept)
+
+An earlier revision of this specification and the frontend spec envisioned a Super Admin "Diagnostics Panel" — aggregated microservice health, circuit-breaker status, database pool/queue-depth monitoring. **That is no longer part of project scope.** No such endpoints exist, and none are planned; a college-project admin panel does not need enterprise-grade observability. The Super Admin's actual, implemented capabilities are all application-level administration:
+
+* **`GET /api/v1/users/lookup?email=`** (`SUPER_ADMIN` only) — exact-match lookup of a user by email, returning their id/name/role/club so the Super Admin can decide whether to promote them. This is intentionally minimal: it is not a searchable user directory, and none is planned.
+* **`PUT /api/v1/users/:userId/role`** (`SUPER_ADMIN` only) — promotes a user to `CLUB_ADMIN` (or changes their role otherwise). A user already assigned to a club (non-null `club_id`) must be demoted first — this prevents a Super Admin from silently reassigning an existing Club Admin to a different club.
+* **`POST /api/v1/clubs`** (`SUPER_ADMIN` only) — creates a new club and, in the same database transaction, assigns the user identified by `admin_email` as its Club Admin (promoting them from `STUDENT` if needed). Clubs are therefore no longer permanently fixed/pre-seeded data — this is now a normal, supported write path. A `SUPER_ADMIN` cannot be assigned as a club's admin this way, and the same "must not already have a club" rule above applies.
+
+### 5.1 Self-Profile Identity Is JWT-Derived, Never Client-Supplied
+
+`GET /api/v1/users/profile/:userId` returns a user's own profile (name, phone, hostel block, preferred size). The authenticated caller's identity for this purpose is **always** taken from the verified JWT's `sub` claim — never from the `:userId` path parameter. The API Gateway attaches the JWT-derived id as a trusted `x-user-id` header (the same mechanism already used for `PUT /profile` and `PUT /size`), and user-service rejects the request with `403` if `:userId` doesn't match that header. A caller can therefore only ever retrieve their own profile through this endpoint, regardless of what `:userId` they put in the URL.
 
 ---

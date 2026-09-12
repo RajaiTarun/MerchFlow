@@ -3,9 +3,12 @@ const redis = new Redis(process.env.VALKEY_URL);
 
 redis.on('error', (err) => console.error('[RATE LIMITER] Valkey connection error:', err.message));
 
-const createRateLimiter = (maxTokens, windowMs) => {
+const createRateLimiter = (maxTokens, windowMs, name) => {
     return async (req, res, next) => {
-        const key = `rate_limit:${req.ip}`;
+        // name scopes the key per limiter — without it, catalogRateLimiter and
+        // ordersRateLimiter would compute the same key for a given IP and end up
+        // sharing one bucket instead of each having their own.
+        const key = `rate_limit:${name}:${req.ip}`;
         try {
             const current = await redis.get(key);
 
@@ -44,7 +47,7 @@ const createRateLimiter = (maxTokens, windowMs) => {
     }
 }
 
-const catalogRateLimiter = createRateLimiter(1000, 60000); // 100
-const ordersRateLimiter = createRateLimiter(1000, 60000); // 5
+const catalogRateLimiter = createRateLimiter(1000, 60000, 'catalog'); // 100
+const ordersRateLimiter = createRateLimiter(1000, 60000, 'orders'); // 5
 
 module.exports = { catalogRateLimiter, ordersRateLimiter };

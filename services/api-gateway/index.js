@@ -78,6 +78,20 @@ const userRoleProxy = createProxyMiddleware({
     }
 });
 
+// Same exact-path pattern as userRoleProxy above — dedicated proxy + pathRewrite
+// so user-service sees /lookup instead of /api/v1/users/lookup. Used for the
+// SUPER_ADMIN email-based user lookup that backs the role-promotion form.
+const userLookupProxy = createProxyMiddleware({
+    target: 'http://localhost:3001',
+    changeOrigin: true,
+    pathRewrite: { '^/api/v1/users': '' },
+    on: {
+        proxyReq: (proxyReq) => {
+            proxyReq.setHeader('X-Internal-Service-Key', process.env.INTERNAL_SERVICE_KEY);
+        }
+    }
+});
+
 // creating a new express application and assigning PORT to the api gateway
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -93,16 +107,25 @@ app.use(cors());
 // route is checked first — app.use() below would otherwise swallow every method
 // (including PUT) on that prefix before this route is ever reached.
 app.put('/api/v1/users/:userId/role', authMiddleware, requireRoles('SUPER_ADMIN'), userRoleProxy);
+// Same reasoning as the role-promotion route above: registered before the
+// general '/api/v1/users' proxy so this SUPER_ADMIN-only lookup is checked
+// first, and before requireAuthForProfileAccess (which only guards specific
+// sub-paths and would otherwise let this one through with no auth at all).
+app.get('/api/v1/users/lookup', authMiddleware, requireRoles('SUPER_ADMIN'), userLookupProxy);
 // /register and /login must stay public (no JWT exists yet at that point), so
-// auth is scoped to exactly these two "act on my own account" routes rather
-// than the whole /api/v1/users prefix.
-const PROFILE_MUTATION_ROUTES = [
+// auth is scoped to exactly these "act on my own account" routes rather than
+// the whole /api/v1/users prefix. GET /profile/:userId is included here too —
+// it used to be reachable with no auth at all, letting any caller read any
+// user's profile by guessing/knowing their UUID. user-service now checks the
+// gateway-injected x-user-id header against :userId itself (see routes/auth.js).
+const PROFILE_ACCESS_ROUTES = [
     { method: 'PUT', pattern: /^\/profile$/ },
-    { method: 'PUT', pattern: /^\/size$/ }
+    { method: 'PUT', pattern: /^\/size$/ },
+    { method: 'GET', pattern: /^\/profile\/[^/]+$/ }
 ];
 
-const requireAuthForProfileMutation = (req, res, next) => {
-    const needsAuth = PROFILE_MUTATION_ROUTES.some(
+const requireAuthForProfileAccess = (req, res, next) => {
+    const needsAuth = PROFILE_ACCESS_ROUTES.some(
         route => route.method === req.method && route.pattern.test(req.path)
     );
 
@@ -112,14 +135,32 @@ const requireAuthForProfileMutation = (req, res, next) => {
 
     return authMiddleware(req, res, () => {
         // Trusted, gateway-derived identity from the verified JWT — never taken
-        // from the request body, so a caller can't act on another user's account.
+        // from the request body or URL, so a caller can't act on another user's account.
         req.headers['x-user-id'] = req.user.sub;
         next();
     });
 };
 
-app.use('/api/v1/users', requireAuthForProfileMutation, userProxy);
-app.use('/api/v1/clubs', authMiddleware, clubsProxy);
+app.use('/api/v1/users', requireAuthForProfileAccess, userProxy);
+// GET / (list clubs) stays open to any authenticated user, same as before.
+// POST / (create club + assign admin) is SUPER_ADMIN only — same scoped-mutation
+// pattern as requireClubAdminForCreate/requireClubAdminForOrders below.
+const CLUB_MUTATION_ROUTES = [
+    { method: 'POST', pattern: /^\/$/ }
+];
+
+const requireSuperAdminForClubCreate = (req, res, next) => {
+    const isMutation = CLUB_MUTATION_ROUTES.some(
+        route => route.method === req.method && route.pattern.test(req.path)
+    );
+
+    if (isMutation) {
+        return requireRoles('SUPER_ADMIN')(req, res, next);
+    }
+    return next();
+};
+
+app.use('/api/v1/clubs', authMiddleware, requireSuperAdminForClubCreate, clubsProxy);
 // Catalog mutation routes (item creation, delivery-slot updates) are restricted
 // to CLUB_ADMIN (SUPER_ADMIN is always allowed through requireRoles()). Every
 // other catalog route — GET listing, GET /:id, the inventory PATCH endpoints —

@@ -55,7 +55,7 @@ The application routes are strictly mapped to the three Role-Based Access Contro
   │     └── /admin/club       (Merchandise Management & Flash Sale Inventory Caps)
   │
   └── [Super Admin Tier]
-        └── /superadmin/root  (System Health Checks & Global Diagnostics)
+        └── /superadmin/root  (Application Administration: user lookup/promotion, club creation)
 
 ```
 
@@ -135,13 +135,13 @@ The application routes are strictly mapped to the three Role-Based Access Contro
 
 
 
-### 4.6 View 6: Super Admin Diagnostics Panel (`/superadmin/root`)
+### 4.6 View 6: Super Admin Administration Panel (`/superadmin/root`)
 
-* **Purpose:** Root control panel to visually prove system resilience during technical interview demos.
+* **Purpose:** Basic, functional application-level administration for the Super Admin — **not** an infrastructure diagnostics/observability tool. There is no circuit breaker, aggregated service-health matrix, or RabbitMQ queue-depth monitor anywhere in this system, and none is planned; that entire "Diagnostics Panel" concept from an earlier revision of this spec has been dropped from scope.
 * **Key UI Components:**
-* **Microservice Health Matrix:** A grid displaying real-time `/health` statuses (`ONLINE`, `DEGRADED`, `OFFLINE`) for the API Gateway, User, Catalog, Order, and Notification services.
-* **Circuit Breaker Status Badge:** Displays the real-time state of the Opossum Circuit Breaker in the Notification Service (`🟢 CLOSED`, `🟡 HALF-OPEN`, `🔴 OPEN - FAILING FAST`).
-* **Database Pool & Queue Monitors:** Displays active Postgres connection counts and pending RabbitMQ queue message depths.
+* **User Lookup & Promotion:** An email text input + "Find" button calling `GET /api/v1/users/lookup?email=`. On a match, displays the user's name/current role/club and offers a "Promote to Club Admin" action (`PUT /api/v1/users/:userId/role`). If the user is already assigned to a club, the UI surfaces that plainly rather than letting the Super Admin attempt (and be rejected by) a reassignment.
+* **Club Creation:** A form (club name, description, and the new Club Admin's email) submitting to `POST /api/v1/clubs`, which creates the club and assigns the specified user as its admin in one step. This replaces clubs being permanently fixed/pre-seeded data — Super Admins can create new ones through this panel.
+* **Basic Overview:** Wherever the existing backend already supports it (e.g. `GET /clubs` for a club list), a simple read-only summary is fine. No new backend endpoints should be built solely to populate this overview — the panel's scope is user lookup/promotion and club creation, not a general-purpose admin dashboard.
 
 
 

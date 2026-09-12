@@ -108,6 +108,23 @@
 
 ---
 
+### Ticket `USR-204`: Super Admin Email Lookup, Role Promotion & Club Creation
+
+* **Module:** User & Auth Service (`Port 3001`) & API Gateway
+* **Priority:** 🟡 **High (P1)** * **Estimated Time:** 3 Hours
+* **Description:** Give the Super Admin the minimal backend surface needed to run the application-level admin panel (see `SECURITY_AND_ACCESS.md` §5) — finding a user by email, promoting a `STUDENT` to `CLUB_ADMIN`, and creating a new club with its admin assigned in one step. Explicitly **not** a user-directory/search feature and **not** infrastructure diagnostics — see `UI-604` below, which this replaces the diagnostics scope of.
+* **Design Patterns & Tactics:** Exact-Match Lookup (no fuzzy search/pagination), Database Transaction (club creation + admin assignment), Reused `users.club_id → clubs.id` relationship (no new schema/relationship introduced).
+* **Acceptance Criteria (AC):**
+* [ ] `GET /api/v1/users/lookup?email=` (`SUPER_ADMIN` only) returns `{id, email, full_name, role, club_id}` for an exact email match, or `404` if none exists. No `password_hash` or other sensitive field is ever returned.
+* [ ] `PUT /api/v1/users/:userId/role` (`SUPER_ADMIN` only, pre-existing) rejects promotion to `CLUB_ADMIN` with `400` if the target already has a non-null `club_id`.
+* [ ] `POST /api/v1/clubs` (`SUPER_ADMIN` only) accepts `{name, description?, admin_email}`, creates the club and promotes/assigns `admin_email`'s user to `CLUB_ADMIN` for it — both in one database transaction, so a failure at either step leaves neither change committed.
+* [ ] `POST /api/v1/clubs` returns `404` if `admin_email` doesn't match an existing user, `400` if that user is `SUPER_ADMIN` or already has a `club_id`, and `409` on a duplicate club name.
+* [ ] None of the three endpoints above are reachable by `STUDENT` or `CLUB_ADMIN` roles (`403`).
+
+
+
+---
+
 ## 📦 Phase 3: Merchandise Catalog Service — NoSQL Domain (Days 3–4)
 
 ### Ticket `CAT-301`: MongoDB Schema-less Catalog & Factory Pattern Instantiation
@@ -306,16 +323,17 @@
 
 ---
 
-### Ticket `UI-604`: Super Admin Health Matrix & Circuit Breaker Telemetry
+### Ticket `UI-604`: Super Admin Administration Panel (User Promotion & Club Creation)
 
 * **Module:** Frontend Client (`/superadmin/root`)
 * **Priority:** 🟢 **Medium (P2)** * **Estimated Time:** 2 Hours
-* **Description:** Construct the Super Admin root diagnostic panel to visually prove microservice liveness, database pool health, and real-time circuit breaker states during technical portfolio demos.
-* **Design Patterns & Tactics:** System Health Monitoring, Circuit Breaker Visualization.
+* **Description:** Build the Super Admin's basic administrative panel: look up a user by email and promote them to `CLUB_ADMIN`, and create a new club while assigning its admin. **Revision note:** this ticket previously specified a microservice health matrix, database pool/queue-depth monitors, and Opossum circuit-breaker telemetry — that infrastructure-diagnostics scope has been dropped entirely (no such backend endpoints exist or are planned; see `SECURITY_AND_ACCESS.md` §5). Depends on `USR-204`.
+* **Design Patterns & Tactics:** Application-Level Administration UI (not infrastructure observability), exact-match lookup (no directory/search).
 * **Acceptance Criteria (AC):**
-* [ ] Dashboard renders a grid polling `/health/detailed` across API Gateway, User, Catalog, Order, and Notification services.
-* [ ] Displays active connection counts for PostgreSQL `pg-pool` and message depths for RabbitMQ queues.
-* [ ] Displays real-time Opossum Circuit Breaker status badge: `🟢 CLOSED (Normal)`, `🟡 HALF-OPEN (Testing)`, or `🔴 OPEN - FAILING FAST`.
+* [ ] An email input + "Find" action calls `GET /api/v1/users/lookup?email=` and displays the matched user's name/role/club, or a clear "not found" state.
+* [ ] A "Promote to Club Admin" action on the found user calls `PUT /api/v1/users/:userId/role`; if the user already has a club, this is surfaced before the action is attempted.
+* [ ] A "Create Club" form (name, description, admin email) calls `POST /api/v1/clubs` and displays the created club + assigned admin on success.
+* [ ] No circuit-breaker badge, service-health grid, or queue-depth/connection-pool monitor is present anywhere on this page.
 
 
 
@@ -349,6 +367,7 @@
 | **`USR-201`** | User Service (`Port 3001`) | 🔴 P0 | 4 hrs | `@students.iiit.ac.in` Domain Gating + Bcrypt Password Hashing (`12` rounds) |
 | **`USR-202`** | User Service (`Port 3001`) | 🟡 P1 | 4 hrs | Builder Pattern Student Profile + Saved Size PostgreSQL Persistence |
 | **`USR-203`** | Auth Service / Gateway | 🔴 P0 | 4 hrs | Stateless JWT Issuance (`1h` TTL) + Tenant-Scoped RBAC (`clubId`) |
+| **`USR-204`** | User Service (`Port 3001`) | 🟡 P1 | 3 hrs | Email Lookup (`GET /lookup`) + Role Promotion Guard + Transactional Club Creation |
 | **`CAT-301`** | Catalog Service (`Port 3002`) | 🟡 P1 | 4 hrs | MongoDB Schema-less Attributes + Factory Pattern Item Instantiation |
 | **`CAT-302`** | Catalog Service (`Port 3002`) | 🟡 P1 | 4 hrs | Cursor Pagination + Valkey Page-1 Feed Caching (`< 15ms` latency) |
 | **`ORD-401`** | Order Service (`Port 3003`) | 🔴 P0 | 4 hrs | Automated Size Injection + Out-of-Stock Manual Fallback Interception |
@@ -361,8 +380,8 @@
 | **`UI-601`** | Frontend Client | 🟡 P1 | 2 hrs | Vite/React Bootstrap + Stateless `localStorage` + Axios Interceptors |
 | **`UI-602`** | Frontend Client | 🟡 P1 | 3 hrs | Diagnostic Catalog Feed + Live Stock Counters + Size Fallback Modal |
 | **`UI-603`** | Frontend Client | 🔴 P0 | 2 hrs | Checkout Control Panel + Magic Value Inputs + Saga Error Badges (`400`) |
-| **`UI-604`** | Frontend Client | 🟢 P2 | 2 hrs | Super Admin Health Matrix (`/health/detailed`) + Breaker Status Badge |
+| **`UI-604`** | Frontend Client | 🟢 P2 | 2 hrs | Super Admin Admin Panel: Email Lookup + Promotion + Club Creation (no diagnostics) |
 | **`DEV-701`** | DevOps (Phase 2 Polish) | 🟡 P1 | 4 hrs | Service `Dockerfile`s + Root `docker-compose.yml` Bridge Orchestration |
-| **TOTALS** | **20 Executable Tickets** | — | **~78 hrs** | **Structured for an 8-Day Focused Engineering Sprint (~6–8 hrs/day)** |
+| **TOTALS** | **21 Executable Tickets** | — | **~81 hrs** | **Structured for an 8-Day Focused Engineering Sprint (~6–8 hrs/day)** |
 
 ---

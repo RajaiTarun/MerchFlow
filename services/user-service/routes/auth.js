@@ -234,6 +234,25 @@ module.exports = (pool) => {
 
     router.get('/profile/:userId', async (req, res) => {
         const { userId } = req.params;
+
+        // Trusted, gateway-derived identity from the verified JWT (see
+        // requireAuthForProfileAccess in api-gateway) — never taken from the
+        // URL, so a caller can't view another user's profile. Same header/
+        // convention used by PUT /profile and PUT /size below.
+        const authenticatedUserId = req.headers['x-user-id'];
+
+        if (!authenticatedUserId) {
+            return res.status(401).json({
+                error: 'user_id is required'
+            })
+        }
+
+        if (authenticatedUserId !== userId) {
+            return res.status(403).json({
+                error: 'You are not authorized to view this profile'
+            })
+        }
+
         try {
             const result = await pool.query('SELECT id, email, full_name, phone, hostel_block, preferred_size FROM users WHERE id = $1', [userId]);
 
@@ -246,6 +265,40 @@ module.exports = (pool) => {
             return res.status(200).json({ user: result.rows[0] })
         } catch (err) {
             console.error('[USER SERVICE] Get profile error:', err.message);
+            return res.status(500).json({ error: 'Internal server error' });
+        }
+    })
+
+    // Exact-match email lookup — backs the Super Admin role-promotion form,
+    // which needs a way to turn an email into a user id without a full
+    // user-listing/search endpoint. Only reachable via the API Gateway's
+    // SUPER_ADMIN-gated proxy route (GET /api/v1/users/lookup) — this service
+    // trusts the gateway to have already enforced that, same as /:userId/role
+    // below. Returns only non-sensitive fields — never password_hash.
+    router.get('/lookup', async (req, res) => {
+        const { email } = req.query;
+
+        if (!email) {
+            return res.status(400).json({
+                error: 'email query parameter is required'
+            })
+        }
+
+        try {
+            const result = await pool.query(
+                'SELECT id, email, full_name, role, club_id FROM users WHERE email = $1',
+                [email]
+            );
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({
+                    error: 'User not found'
+                })
+            }
+
+            return res.status(200).json({ user: result.rows[0] })
+        } catch (err) {
+            console.error('[USER SERVICE] User lookup error:', err.message);
             return res.status(500).json({ error: 'Internal server error' });
         }
     })
@@ -276,6 +329,23 @@ module.exports = (pool) => {
                 if (club.rows.length === 0) {
                     return res.status(400).json({
                         error: 'club_id does not reference an existing club'
+                    })
+                }
+
+                // A user already assigned to a club (i.e. currently a Club Admin
+                // somewhere) must be demoted first — promoting them straight into
+                // a different club would silently move them, which is never the intent.
+                const existingUser = await pool.query('SELECT club_id FROM users WHERE id = $1', [userId]);
+
+                if (existingUser.rows.length === 0) {
+                    return res.status(404).json({
+                        error: 'User not found'
+                    })
+                }
+
+                if (existingUser.rows[0].club_id) {
+                    return res.status(400).json({
+                        error: 'User is already assigned to a club and cannot be promoted to CLUB_ADMIN for another club. Demote them (e.g. to STUDENT) first.'
                     })
                 }
             }

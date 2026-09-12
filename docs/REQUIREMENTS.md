@@ -19,7 +19,7 @@ The **Centralized College Merchandise Management System** acts as a unified port
 
 - **The Student:** Wants a streamlined purchasing experience where they can browse all college club merchandise in one portal, save their preferred sizing profile once, and securely purchase limited-edition drops without system crashes.
 - **The Club Administrator:** Needs a structured dashboard to publish merchandise items with varying attributes, set strict inventory limits, and manage student orders efficiently.
-- **The System Administrator (Super Admin):** Acts as the universal controller of the entire platform with full system-wide permissions. Has the authority to onboard or deactivate club administrative accounts, manage or suspend student profiles, override order states during edge-case disputes, and monitor global system health, database pools, and message queues across all microservices.
+- **The System Administrator (Super Admin):** Acts as the universal controller of the entire platform with full system-wide permissions. Has the authority to look up any registered user by email, promote a user to `CLUB_ADMIN`, and create new clubs — assigning each new club's admin in the same action. Also retains every permission a Club Admin or Student has (including placing orders).
 
 
 
@@ -55,6 +55,14 @@ The **Centralized College Merchandise Management System** acts as a unified port
 * **FR4.1 — Asynchronous Delivery Updates:** Upon successful order placement, the system must asynchronously generate real-time updates regarding upcoming campus delivery and distribution time slots.
 * **FR4.2 — Observer Pattern Integration:** The system must use the Observer Pattern so that all subscribed students automatically receive notifications when order confirmations or distribution schedule announcements occur.
 * **FR4.3 — Strategy Pattern for Channels:** The service must implement the Strategy Pattern (`NotificationStrategy`), keeping initial sprint delivery restricted to an `InAppNotificationStrategy` while ensuring adherence to the Open/Closed Principle for future `EmailStrategy` or `WhatsAppStrategy` integration.
+
+### FR5: Super Admin Administration
+
+A basic, functional administration capability for the Super Admin — application-level administration only. This explicitly does **not** include infrastructure diagnostics (circuit-breaker status, aggregated microservice health, database connection-pool or message-queue monitoring); an earlier revision of this specification included that scope and it has been removed.
+
+* **FR5.1 — User Lookup by Email:** The Super Admin must be able to find an existing user by their exact email address and view their basic, non-sensitive account details (name, current role, current club). This is a minimal exact-match lookup, not a searchable/paginated user directory.
+* **FR5.2 — Role Promotion to Club Admin:** The Super Admin must be able to promote an existing user (identified via FR5.1) to `CLUB_ADMIN`. A user already assigned to a club must be demoted before being promoted to administer a different one.
+* **FR5.3 — Club Creation with Admin Assignment:** The Super Admin must be able to create a new club, identifying its Club Admin by email in the same request. Club creation and admin assignment must be transactional — if either step fails, neither is committed. Clubs are therefore not permanently fixed/pre-seeded data.
 
 ---
 
