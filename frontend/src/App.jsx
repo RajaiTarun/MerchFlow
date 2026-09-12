@@ -1,4 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
+import Navbar from './Navbar.jsx'
+import ProtectedRoute from './ProtectedRoute.jsx'
 import LoginPage from './pages/LoginPage.jsx'
 import RegisterPage from './pages/RegisterPage.jsx'
 import CatalogPage from './pages/CatalogPage.jsx'
@@ -8,15 +10,46 @@ import AdminPage from './pages/AdminPage.jsx'
 
 function App() {
   return (
-    <Routes>
-      <Route path="/" element={<Navigate to="/catalog" />} />
-      <Route path="/login" element={<LoginPage />} />
-      <Route path="/register" element={<RegisterPage />} />
-      <Route path="/catalog" element={<CatalogPage />} />
-      <Route path="/catalog/:id" element={<ItemDetailPage />} />
-      <Route path="/dashboard" element={<DashboardPage />} />
-      <Route path="/admin" element={<AdminPage />} />
-    </Routes>
+    <>
+      <Navbar />
+      <Routes>
+        <Route path="/" element={<Navigate to="/catalog" />} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/register" element={<RegisterPage />} />
+        <Route
+          path="/catalog"
+          element={
+            <ProtectedRoute>
+              <CatalogPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/catalog/:id"
+          element={
+            <ProtectedRoute>
+              <ItemDetailPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/dashboard"
+          element={
+            <ProtectedRoute>
+              <DashboardPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin"
+          element={
+            <ProtectedRoute roles={['CLUB_ADMIN', 'SUPER_ADMIN']}>
+              <AdminPage />
+            </ProtectedRoute>
+          }
+        />
+      </Routes>
+    </>
   )
 }
 
