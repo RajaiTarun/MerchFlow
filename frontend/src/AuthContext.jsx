@@ -15,23 +15,32 @@ function decodeJwt(token) {
 export function AuthProvider({ children }) {
   const [token, setToken] = useState(null)
   const [user, setUser] = useState(null)
+  // Starts true because reading localStorage happens in an effect, which runs
+  // AFTER the first render. Without this flag, ProtectedRoute would see
+  // token === null on that first render (before the effect below has had a
+  // chance to run) and redirect to /login even when a valid token exists.
+  const [loading, setLoading] = useState(true)
 
   // Runs once when the app first loads, so a page refresh doesn't log the user out.
   useEffect(() => {
     const stored = localStorage.getItem(TOKEN_KEY)
-    if (!stored) return
+    if (!stored) {
+      setLoading(false)
+      return
+    }
 
     try {
       const decoded = decodeJwt(stored)
       if (decoded.exp && decoded.exp * 1000 < Date.now()) {
         localStorage.removeItem(TOKEN_KEY)
-        return
+      } else {
+        setToken(stored)
+        setUser(decoded)
       }
-      setToken(stored)
-      setUser(decoded)
     } catch {
       localStorage.removeItem(TOKEN_KEY)
     }
+    setLoading(false)
   }, [])
 
   function login(newToken) {
@@ -48,7 +57,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ token, user, login, logout }}>
+    <AuthContext.Provider value={{ token, user, login, logout, loading }}>
       {children}
     </AuthContext.Provider>
   )
