@@ -31,59 +31,75 @@ function RegisterPage() {
 
   if (success) {
     return (
-      <div>
-        <p>Registered! Please log in.</p>
-        <Link to="/login">Go to login</Link>
+      <div className="max-w-sm mx-auto">
+        <p className="mb-3">Registered! Please log in.</p>
+        <Link to="/login" className="text-blue-600 hover:underline">
+          Go to login
+        </Link>
       </div>
     )
   }
 
   return (
-    <div>
-      <h2>Register</h2>
-      <form onSubmit={handleSubmit}>
+    <div className="max-w-sm mx-auto">
+      <h2 className="text-xl font-semibold mb-4">Register</h2>
+      <form onSubmit={handleSubmit} className="flex flex-col gap-3">
         <div>
-          <label htmlFor="email">Email</label>
-          <br />
+          <label htmlFor="email" className="block text-sm font-medium mb-1">
+            Email
+          </label>
           <input
             id="email"
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
+            className="w-full border border-gray-300 rounded px-3 py-2"
           />
           {showDomainWarning && (
-            <p className="error-text">Must be an @students.iiit.ac.in email</p>
+            <p className="text-red-600 text-sm mt-1">
+              Must be an @students.iiit.ac.in email
+            </p>
           )}
         </div>
         <div>
-          <label htmlFor="password">Password</label>
-          <br />
+          <label htmlFor="password" className="block text-sm font-medium mb-1">
+            Password
+          </label>
           <input
             id="password"
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
+            className="w-full border border-gray-300 rounded px-3 py-2"
           />
         </div>
         <div>
-          <label htmlFor="fullName">Full name</label>
-          <br />
+          <label htmlFor="fullName" className="block text-sm font-medium mb-1">
+            Full name
+          </label>
           <input
             id="fullName"
             type="text"
             value={fullName}
             onChange={(e) => setFullName(e.target.value)}
+            className="w-full border border-gray-300 rounded px-3 py-2"
           />
         </div>
-        {error && <p className="error-text">{error}</p>}
-        <button type="submit" className="btn">
+        {error && <p className="text-red-600 text-sm">{error}</p>}
+        <button
+          type="submit"
+          className="bg-blue-600 text-white rounded px-4 py-2 hover:bg-blue-700"
+        >
           Register
         </button>
       </form>
-      <p>
-        Already have an account? <Link to="/login">Log in</Link>
+      <p className="mt-4 text-sm">
+        Already have an account?{' '}
+        <Link to="/login" className="text-blue-600 hover:underline">
+          Log in
+        </Link>
       </p>
     </div>
   )

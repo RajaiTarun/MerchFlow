@@ -99,6 +99,11 @@ module.exports = (pool, redis) => {
         const userId = decoded.sub;
         const internalHeaders = {
             'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY,
+            // user-service's GET /profile/:userId now requires this to match
+            // :userId (see requireAuthForProfileAccess in api-gateway) - safe
+            // to set here because this service-to-service call always fetches
+            // the checking-out user's own profile, never anyone else's.
+            'x-user-id': userId,
             'Content-Type': 'application/json'
         }
 

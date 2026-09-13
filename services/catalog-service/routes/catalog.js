@@ -376,6 +376,11 @@ router.patch('/:id/stock', async (req, res) => {
             `remainingStock=${result.item.stock}`
         );
 
+        // The unfiltered catalog listing cache is now stale (stock changed) -
+        // same invalidation this route's siblings (POST /, PUT /delivery-slot)
+        // already do after their own writes.
+        await invalidateCatalogCache();
+
         return res.status(200).json({
             message: 'Inventory reserved successfully',
             alreadyReserved: false,
@@ -514,6 +519,10 @@ router.patch('/:id/rollback', async (req, res) => {
         console.log(
             `[CATALOG SERVICE] Compensation applied: +${result.reservation.quantity} stock for item ${result.reservation.itemId}. New stock: ${result.item.stock}`
         );
+
+        // Same reasoning as the stock-reservation route above - stock changed,
+        // so the cached unfiltered listing is now stale.
+        await invalidateCatalogCache();
 
         return res.status(200).json({
             message: 'Compensation applied',

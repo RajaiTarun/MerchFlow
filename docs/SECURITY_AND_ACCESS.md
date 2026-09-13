@@ -137,4 +137,6 @@ An earlier revision of this specification and the frontend spec envisioned a Sup
 
 `GET /api/v1/users/profile/:userId` returns a user's own profile (name, phone, hostel block, preferred size). The authenticated caller's identity for this purpose is **always** taken from the verified JWT's `sub` claim — never from the `:userId` path parameter. The API Gateway attaches the JWT-derived id as a trusted `x-user-id` header (the same mechanism already used for `PUT /profile` and `PUT /size`), and user-service rejects the request with `403` if `:userId` doesn't match that header. A caller can therefore only ever retrieve their own profile through this endpoint, regardless of what `:userId` they put in the URL.
 
+Order-service also calls this endpoint directly (service-to-service, bypassing the gateway) during checkout, to fetch the checking-out student's saved size. It sets `x-user-id` itself (to the same `sub` it already extracted from that student's JWT) rather than going through the gateway — this is safe because it only ever requests that student's own profile, never anyone else's, so the ownership check still holds end-to-end.
+
 ---

@@ -27,38 +27,48 @@ function LoginPage() {
   }
 
   return (
-    <div>
-      <h2>Login</h2>
-      <form onSubmit={handleSubmit}>
+    <div className="max-w-sm mx-auto">
+      <h2 className="text-xl font-semibold mb-4">Login</h2>
+      <form onSubmit={handleSubmit} className="flex flex-col gap-3">
         <div>
-          <label htmlFor="email">Email</label>
-          <br />
+          <label htmlFor="email" className="block text-sm font-medium mb-1">
+            Email
+          </label>
           <input
             id="email"
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
+            className="w-full border border-gray-300 rounded px-3 py-2"
           />
         </div>
         <div>
-          <label htmlFor="password">Password</label>
-          <br />
+          <label htmlFor="password" className="block text-sm font-medium mb-1">
+            Password
+          </label>
           <input
             id="password"
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
+            className="w-full border border-gray-300 rounded px-3 py-2"
           />
         </div>
-        {error && <p className="error-text">{error}</p>}
-        <button type="submit" className="btn">
+        {error && <p className="text-red-600 text-sm">{error}</p>}
+        <button
+          type="submit"
+          className="bg-blue-600 text-white rounded px-4 py-2 hover:bg-blue-700"
+        >
           Login
         </button>
       </form>
-      <p>
-        Need an account? <Link to="/register">Register</Link>
+      <p className="mt-4 text-sm">
+        Need an account?{' '}
+        <Link to="/register" className="text-blue-600 hover:underline">
+          Register
+        </Link>
       </p>
     </div>
   )

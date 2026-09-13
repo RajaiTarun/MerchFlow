@@ -42,3 +42,27 @@ Problems hit during development + how they were solved. Kept short for interview
 
 ---
 
+### 4. Catalog cache is real, but the "< 50ms hit" doc claim was aspirational, not measured
+
+**Finding:** Manually verified `GET /catalog`'s Valkey caching (see #1) by clearing the cache key, then timing a cold request followed by several warm ones, cross-checked against the catalog-service log lines (`Cache miss: querying MongoDB` → `Page 1 cached in Valkey for 60s` → `cache hit : serving page 1 from valkey`). The mechanism itself is correct and working exactly as designed.
+
+**Measured (3 rounds, local dev machine against Neon/Atlas/Upstash):** MISS ≈ 336ms avg, HIT ≈ 207ms avg — cache hits are consistently ~40% faster, but nowhere near the `< 50ms` cache-hit figure quoted in `PRD.md` / `FRONTEND_SPEC_DOCUMENT.md`.
+
+**Why the gap:** both a hit and a miss still pay a network round-trip to a cloud service from a local machine — a hit just skips the *second* round-trip (to MongoDB Atlas) that a miss pays on top of the first (to Upstash). The absolute numbers here are dominated by cloud network latency, not by the actual cache-lookup cost, which is genuinely sub-millisecond. Co-located services (e.g. the project's planned Docker Compose deployment) would show a much sharper gap, since that network latency mostly drops out.
+
+**Takeaway:** a caching layer can be implemented completely correctly and still miss a specific latency number quoted in planning docs, if that number assumed a deployment topology (co-located services) different from where it's actually being measured (local machine → multiple separate cloud regions). Verify performance claims against the actual measurement environment before citing them as fact.
+
+---
+
+### 5. Checkout's own stock-mutating endpoints never invalidated the catalog cache
+
+**Problem:** `PATCH /:id/stock` (reserve) and `PATCH /:id/rollback` (saga compensation) both change `stock`, but neither called `invalidateCatalogCache()` — only `POST /` and `PUT /:itemId/delivery-slot` did (see #1). So a real checkout could leave the cached unfiltered `/catalog` listing showing stale stock for up to 60s, even though the underlying number was correct. Found via frontend testing: after placing a real order, the item detail and catalog pages kept showing the pre-order stock count.
+
+**Fix:** added the same `invalidateCatalogCache()` call to both routes, right after their DB write succeeds - identical pattern to the two routes that already had it. Verified: warmed the cache, ran a checkout, confirmed the cache key was gone afterward and the logs showed `Invalidated cached page 1 after catalog change` firing from both the reservation and the compensation paths.
+
+**Also fixed on the frontend (not a backend bug, but the same underlying "user might be looking at a stale number" concern):** the item detail page never refetched stock after a successful order, and had no way to notice if *someone else's* checkout changed the count while the page sat open. Added a refetch immediately after a successful order, plus light polling (every 10s) while the page is open. Explicitly not WebSockets/SSE - the actual overselling guarantee was never based on what's displayed (the atomic DB-level check-and-decrement at checkout time is what matters), so this only needed to be as fresh as "good enough for a human to trust," not real-time-push-perfect.
+
+**Takeaway:** when auditing a system for "every write path that can make a cached read stale," check every route that mutates the cached field, not just the ones with obvious names (`POST`/`PUT` on the item itself) - `PATCH .../stock` and `PATCH .../rollback` mutate the exact same field and were just as capable of going stale.
+
+---
+
