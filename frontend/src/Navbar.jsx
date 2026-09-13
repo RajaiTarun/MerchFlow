@@ -18,8 +18,14 @@ function Navbar() {
           <Link to="/catalog" className="text-blue-600 hover:underline">
             Catalog
           </Link>
-          <Link to="/dashboard" className="text-blue-600 hover:underline">
-            Dashboard
+          <Link to="/profile" className="text-blue-600 hover:underline">
+            Profile
+          </Link>
+          <Link to="/orders" className="text-blue-600 hover:underline">
+            Orders
+          </Link>
+          <Link to="/notifications" className="text-blue-600 hover:underline">
+            Notifications
           </Link>
           {(user.role === 'CLUB_ADMIN' || user.role === 'SUPER_ADMIN') && (
             <Link to="/admin" className="text-blue-600 hover:underline">

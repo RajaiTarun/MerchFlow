@@ -5,7 +5,9 @@ import LoginPage from './pages/LoginPage.jsx'
 import RegisterPage from './pages/RegisterPage.jsx'
 import CatalogPage from './pages/CatalogPage.jsx'
 import ItemDetailPage from './pages/ItemDetailPage.jsx'
-import DashboardPage from './pages/DashboardPage.jsx'
+import ProfilePage from './pages/ProfilePage.jsx'
+import OrdersPage from './pages/OrdersPage.jsx'
+import NotificationsPage from './pages/NotificationsPage.jsx'
 import AdminPage from './pages/AdminPage.jsx'
 
 function App() {
@@ -34,10 +36,26 @@ function App() {
             }
           />
           <Route
-            path="/dashboard"
+            path="/profile"
             element={
               <ProtectedRoute>
-                <DashboardPage />
+                <ProfilePage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/orders"
+            element={
+              <ProtectedRoute>
+                <OrdersPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/notifications"
+            element={
+              <ProtectedRoute>
+                <NotificationsPage />
               </ProtectedRoute>
             }
           />

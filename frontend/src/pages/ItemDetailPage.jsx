@@ -178,8 +178,8 @@ function ItemDetailPage() {
           <p className="mb-2">
             Order placed successfully! (status: {order?.status})
           </p>
-          <Link to="/dashboard" className="text-blue-600 hover:underline">
-            View it on your dashboard
+          <Link to="/orders" className="text-blue-600 hover:underline">
+            View it in your orders
           </Link>
         </div>
       ) : (
