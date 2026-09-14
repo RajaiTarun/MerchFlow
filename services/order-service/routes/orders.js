@@ -355,8 +355,11 @@ module.exports = (pool, redis) => {
             }
 
             // saving this order record in PostgreSQL
+            // student_email is denormalized from the caller's own JWT (same
+            // reasoning as club_id above it) so club-scoped order views can
+            // show who placed an order without a cross-service lookup.
             const result = await pool.query(`
-INSERT INTO orders(user_id, catalog_item_id, club_id, selected_size, quantity, status, idempotency_key) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *
+INSERT INTO orders(user_id, catalog_item_id, club_id, selected_size, quantity, status, idempotency_key, student_email) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *
 `, [
                 orderCommand.userId,
                 orderCommand.catalogItemId,
@@ -364,7 +367,8 @@ INSERT INTO orders(user_id, catalog_item_id, club_id, selected_size, quantity, s
                 orderCommand.selectedSize,
                 orderCommand.quantity,
                 orderCommand.status,
-                orderCommand.idempotencyKey
+                orderCommand.idempotencyKey,
+                decoded.email
             ]);
 
             // ── AC1: Commit Reservation in Catalog ──
@@ -540,7 +544,7 @@ INSERT INTO orders(user_id, catalog_item_id, club_id, selected_size, quantity, s
 
         try {
             const result = await pool.query(
-                `SELECT id, user_id, catalog_item_id, selected_size, quantity, status, created_at
+                `SELECT id, user_id, student_email, catalog_item_id, selected_size, quantity, status, created_at
                  FROM orders WHERE club_id = $1 ORDER BY created_at DESC`,
                 [clubId]
             );

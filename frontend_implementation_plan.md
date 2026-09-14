@@ -85,7 +85,7 @@ Note: registration does **not** accept a `preferred_size` (unlike what the old s
 | Checkout | POST | `/orders` | Yes | any authenticated role | Headers: `Idempotency-Key: <uuid>` (required). Body: `{catalogItemId, quantity=1, selectedSize?, mockCardNumber}` | `201 {message, order}` (or `200` on idempotent replay) | see full table in §8 |
 | My orders | GET | `/orders` | Yes | any | — | `200 {orders:[{id,catalog_item_id,selected_size,quantity,status,created_at}]}` | — |
 | Order detail | GET | `/orders/:id` | Yes | owner only | — | `200 {order}` | `403` not yours, `404`, `400` bad id |
-| Club's orders | GET | `/orders/club?clubId=` | Yes | `CLUB_ADMIN` (own club, auto) / `SUPER_ADMIN` (`clubId` query param required) | — | `200 {orders:[{id,user_id,catalog_item_id,selected_size,quantity,status,created_at}]}` | `403`, `400` |
+| Club's orders | GET | `/orders/club?clubId=` | Yes | `CLUB_ADMIN` (own club, auto) / `SUPER_ADMIN` (`clubId` query param required) | — | `200 {orders:[{id,user_id,student_email,catalog_item_id,selected_size,quantity,status,created_at}]}` (`student_email` added 2026-09-14 — denormalized onto `orders` at checkout time so this route can show who placed an order without a cross-service lookup; see `migrate7.js`) | `403`, `400` |
 | Mark delivered | PATCH | `/orders/:orderId/status` | Yes | `CLUB_ADMIN` (own club) / `SUPER_ADMIN` | `{status: "DELIVERED"}` (only value accepted; order must currently be `COMMITTED`) | `200 {message, order}` | `400` wrong current status, `403` not your club's order, `404` |
 | *Users by item* | GET | `/orders/by-item/:catalogItemId/users` | **Internal only** — used by notification-service | — | — | — | **Do not call from frontend** |
 
@@ -152,13 +152,13 @@ Student Account Pages
 ```
 
 ```
-Club Admin / Super Admin Dashboard
-  /admin → (Super Admin picks a club from GET /clubs; Club Admin's club is implicit)
-        ↓
-  Create item → POST /catalog
-  Set delivery slot on an existing item → PUT /catalog/:id/delivery-slot
-  View club's orders → GET /orders/club → Mark Delivered → PATCH /orders/:orderId/status
-  (Super Admin only) Look up a user by email → GET /users/lookup?email=, then promote → PUT /users/:userId/role
+Club Admin / Super Admin Pages (each resolves "which club" via useClubContext;
+Super Admin picks one from GET /clubs, Club Admin's is implicit from the JWT)
+  /admin/create-item → POST /catalog
+  /admin/delivery-slots → GET /catalog?clubId= → set slot → PUT /catalog/:id/delivery-slot
+  /admin/orders → GET /orders/club + GET /catalog?clubId= (for item names) → Mark Delivered → PATCH /orders/:orderId/status
+  (Super Admin only) /admin/promote → GET /users/lookup?email=, then PUT /users/:userId/role
+  (Super Admin only) /admin/create-club → POST /clubs
 ```
 
 ---
@@ -178,9 +178,11 @@ None of these block building the frontend — they just determine exactly how a 
 
 ## 5. Page / Component Structure
 
-**Revision note (2026-09-13):** originally planned as six routes with a single combined `/dashboard` page. After building it, Profile/Orders/Notifications were split into three separate flat routes (see the Phase 7 revision note above) — no shared state existed between them anyway, and this app never uses nested routes, so three flat pages was simpler than reaching for a new routing pattern just to keep them under one URL. That makes it eight routes now.
+**Revision note (2026-09-13):** originally planned as six routes with a single combined `/dashboard` page. After building it, Profile/Orders/Notifications were split into three separate flat routes (see the Phase 7 revision note above) — no shared state existed between them anyway, and this app never uses nested routes, so three flat pages was simpler than reaching for a new routing pattern just to keep them under one URL.
 
-Eight routes, backed by ~15 files total. No `Button.jsx`/`Card.jsx`/`Input.jsx`-style micro-components — plain HTML elements with the shared `index.css` classes are enough at this scale.
+**Revision note (2026-09-14):** the same thing happened to `/admin` — see the Phase 8 revision note. It's five routes now (`/admin/create-item`, `/admin/delivery-slots`, `/admin/orders`, `/admin/promote`, `/admin/create-club`), and unlike the Dashboard split, three of them share real logic, pulled into a `useClubContext` hook + `ClubPicker` component rather than duplicated. That makes it twelve routes total now.
+
+Twelve routes, backed by ~19 files total. No `Button.jsx`/`Card.jsx`/`Input.jsx`-style micro-components — plain HTML elements with the shared `index.css` classes are enough at this scale.
 
 | Route | Page component | Purpose | Calls | Guarded? |
 |---|---|---|---|---|
@@ -191,21 +193,27 @@ Eight routes, backed by ~15 files total. No `Button.jsx`/`Card.jsx`/`Input.jsx`-
 | `/profile` | `ProfilePage` | View + edit saved profile/size | `GET/PUT /users/profile/:id` | Any logged-in user |
 | `/orders` | `OrdersPage` | Order history | `GET /orders` | Any logged-in user |
 | `/notifications` | `NotificationsPage` | Notification inbox, polled | `GET/PATCH /notifications` | Any logged-in user |
-| `/admin` | `AdminPage` | Create item, delivery slots, club orders, (Super Admin) user lookup/promotion + club creation | `GET /clubs`, `POST /catalog`, `PUT /catalog/:id/delivery-slot`, `GET /orders/club`, `PATCH /orders/:id/status`, `GET /users/lookup`, `PUT /users/:id/role`, `POST /clubs` | `CLUB_ADMIN` / `SUPER_ADMIN` only |
+| `/admin/create-item` | `CreateItemPage` | Publish merchandise | `GET /clubs`, `POST /catalog` | `CLUB_ADMIN` / `SUPER_ADMIN` |
+| `/admin/delivery-slots` | `DeliverySlotsPage` | Set delivery slots on the club's items | `GET /clubs`, `GET /catalog?clubId=`, `PUT /catalog/:id/delivery-slot` | `CLUB_ADMIN` / `SUPER_ADMIN` |
+| `/admin/orders` | `ClubOrdersPage` | View + fulfill the club's orders | `GET /clubs`, `GET /orders/club`, `GET /catalog?clubId=`, `PATCH /orders/:id/status` | `CLUB_ADMIN` / `SUPER_ADMIN` |
+| `/admin/promote` | `PromoteUserPage` | Look up a user by email, change their role | `GET /clubs`, `GET /users/lookup`, `PUT /users/:id/role` | `SUPER_ADMIN` only |
+| `/admin/create-club` | `CreateClubPage` | Create a club + assign its admin | `POST /clubs` | `SUPER_ADMIN` only |
 
 Supporting (non-page) files:
 
 | File | Purpose | Why it exists |
 |---|---|---|
 | `App.jsx` | `<Routes>` definitions + renders `Navbar` | Root layout |
-| `Navbar.jsx` | Top nav: Catalog / Profile / Orders / Notifications / Admin (role-conditional) / Logout | Shared across every page |
-| `ProtectedRoute.jsx` | Redirects to `/login` if no token; optionally checks allowed roles | One small reusable guard, used 6 times (catalog, item detail, profile, orders, notifications, admin) — a genuine case for a shared component |
+| `Navbar.jsx` | Top nav: Catalog / Profile / Orders / Notifications / (role-conditional admin links) / Logout | Shared across every page |
+| `ProtectedRoute.jsx` | Redirects to `/login` if no token; optionally checks allowed roles | One small reusable guard, used 10 times (every route except login/register) — a genuine case for a shared component |
 | `AuthContext.jsx` | Holds `{token, user}`, `login()`, `logout()`, persists to `localStorage`, decodes the JWT | The one piece of state every page/component needs — see §6 |
+| `useClubContext.js` | Hook: resolves "which club am I acting as" for admin pages | Used identically by 3 admin pages — see the Phase 8 revision note |
+| `ClubPicker.jsx` | Renders `useClubContext`'s result as a dropdown (Super Admin) or read-only text (Club Admin) | Same 3 admin pages |
 | `api.js` | One `apiFetch()` helper function | See §7 |
 | `main.jsx` | Renders `<BrowserRouter><AuthProvider><App/></AuthProvider></BrowserRouter>` | Entry point |
 | `index.css` | Plain CSS: resets, form/button/table styling | No CSS framework |
 
-That's it — no `hooks/`, `services/`, `utils/`, or `components/` folders full of one-off files. Everything lives flat under `src/`, with `src/pages/` holding just the eight page files.
+That's it — no `hooks/`, `services/`, or `components/` folders; the two shared admin files just sit flat under `src/` next to everything else. `src/pages/` holds the twelve page files.
 
 ---
 
@@ -219,7 +227,12 @@ That's it — no `hooks/`, `services/`, `utils/`, or `components/` folders full 
 | Profile form fields | Local `useState` in `ProfilePage` | Scoped to that page only. |
 | Orders list | Local `useState` in `OrdersPage` | Scoped to that page only. |
 | Notifications list | Local `useState` in `NotificationsPage` | Scoped to that page only. |
-| Create-item form, selected club (Super Admin), club's items, club's orders, user-lookup/promotion form, create-club form | Local `useState` in `AdminPage` | Same reasoning. |
+| Acting club (`clubs`, `selectedClubId`) | `useClubContext` hook, called from `CreateItemPage`, `DeliverySlotsPage`, `ClubOrdersPage` | Genuinely shared logic across three pages — the one case among the admin pages worth lifting into a hook rather than duplicating. |
+| Create-item form | Local `useState` in `CreateItemPage` | Scoped to that page only. |
+| Delivery-slot inputs per item | Local `useState` in `DeliverySlotsPage` | Scoped to that page only. |
+| Club's orders, club's items (for name lookup) | Local `useState` in `ClubOrdersPage` | Scoped to that page only. |
+| User-lookup/promotion form | Local `useState` in `PromoteUserPage` | Scoped to that page only. |
+| Create-club form | Local `useState` in `CreateClubPage` | Scoped to that page only. |
 
 No Redux, no Zustand, no `useReducer` (the checkout flow uses a handful of plain `useState` flags and a `while` loop — see §12 Steps 22–23 — which is easier to read than a reducer for someone new to this).
 
@@ -267,7 +280,7 @@ Logout button (Navbar):
 
 - **Where the token lives:** `localStorage`, key `ccmms_token`. Simplest option; the standard tradeoff (vulnerable to XSS if the app ever includes untrusted third-party scripts) is acceptable for a local learning/demo project with no such scripts.
 - **How it's attached:** one `if (token) headers.Authorization = 'Bearer ' + token` line inside `apiFetch()` — not an Axios interceptor.
-- **Protected routes:** `ProtectedRoute` reads `AuthContext`; if there's no token, `<Navigate to="/login" />`. An optional `roles` prop lets `/admin` require `CLUB_ADMIN`/`SUPER_ADMIN` and bounce anyone else to `/catalog`.
+- **Protected routes:** `ProtectedRoute` reads `AuthContext`; if there's no token, `<Navigate to="/login" />`. An optional `roles` prop lets the three shared admin routes (`/admin/create-item`, `/admin/delivery-slots`, `/admin/orders`) require `CLUB_ADMIN`/`SUPER_ADMIN`, and the two Super-Admin-only ones (`/admin/promote`, `/admin/create-club`) require `SUPER_ADMIN` specifically — bouncing anyone else to `/catalog`.
 - **Missing token on a protected page:** never actually reachable mid-render, because `ProtectedRoute` redirects before the page mounts — but `apiFetch` still defends itself (skips adding the header rather than sending `Authorization: Bearer undefined`).
 - **Backend auth error (`401`):** every page's `catch` block checks `err.status === 401` and calls `logout()` + redirects, so an expired token always lands the user back on `/login` with a plain "Session expired, please log in again" message instead of a broken page.
 
@@ -671,66 +684,70 @@ White background, black text, system font, one shared `index.css`:
 **How to verify:** As above.
 **Why are we doing it this way?** This is the simplest possible stand-in for real-time updates, and — since no SSE/WebSocket endpoint exists in the backend at all — the *only* honest option. The cleanup function is the one non-obvious detail worth calling out explicitly (a forgotten `clearInterval` is a classic React bug).
 
-### Phase 8 — Club Admin / Super Admin Dashboard
+### Phase 8 — Club Admin / Super Admin Pages
 
-#### Step 28 — Build the admin page skeleton and club context
-**Goal:** Establish which club this admin session is acting as.
-**Files involved:** `frontend/src/pages/AdminPage.jsx`.
-**Concepts I will learn:** deriving a value differently based on role.
-**Implementation:** If `user.role === 'SUPER_ADMIN'`, fetch `GET /clubs` and render a `<select>` to choose an "acting club" (stored in local state, `selectedClubId`). If `user.role === 'CLUB_ADMIN'`, skip the dropdown entirely — `user.clubId` from the JWT is used directly and shown as read-only text ("Managing: <resolved club name>", looked up from the same `GET /clubs` call for a friendlier label).
+**Revision note (2026-09-14):** originally planned (and first built) as one `/admin` page with every section — create item, delivery slots, club orders, plus Super Admin's promotion/club-creation forms — all in a single `AdminPage.jsx`, following the "one page serves both roles" reasoning below. After building it, the user asked for the same separation of concerns as Phase 7: five separate pages instead. Unlike the Dashboard split, three of these pages (Create Item, Delivery Slots, Club Orders) *do* share real logic — each needs to resolve "which club am I acting as" the same way — so that piece was pulled into a shared `useClubContext` hook (`frontend/src/useClubContext.js`) and a `ClubPicker` presentational component (`frontend/src/ClubPicker.jsx`), used by all three pages instead of duplicated three times. The two Super-Admin-only pages (Promote, Create Club) don't need the acting-club concept at all, so they don't use it. Routes live under an `/admin/...` prefix (`/admin/create-item`, `/admin/delivery-slots`, `/admin/orders`, `/admin/promote`, `/admin/create-club`) purely to avoid name collisions with student-facing routes (`/orders` already exists) — these are still flat routes, not React Router nesting/`<Outlet>`. The steps below reflect this current structure.
+
+Also fixed while building the Club Orders page: it was showing a raw `catalog_item_id` and not showing which student placed the order at all. See Step 31 below.
+
+#### Step 28 — Build the `useClubContext` hook and `ClubPicker` component
+**Goal:** Establish which club an admin page is acting for, in one reusable place instead of three copies.
+**Files involved:** new `frontend/src/useClubContext.js`, `frontend/src/ClubPicker.jsx`.
+**Concepts I will learn:** a custom hook that returns derived values (not just raw state), deriving a value differently based on role.
+**Implementation:** `useClubContext(token, user)` fetches `GET /clubs` once and returns `{clubs, isSuperAdmin, selectedClubId, setSelectedClubId, resolvedClubId, resolvedClubName}` — `resolvedClubId` is `selectedClubId` for a Super Admin or `user.clubId` (from the JWT) for a Club Admin. `ClubPicker` renders a `<select>` for Super Admin or read-only "Managing: <name>" text for Club Admin, from whatever the hook returned.
 **Backend interaction:** `GET /clubs`.
-**Expected behavior:** Club Admin sees their own club name; Super Admin sees a dropdown.
-**How to verify:** Log in as the seeded Club Admin, confirm the correct club name shows; log in as Super Admin, confirm the dropdown lists all three seeded clubs.
-**Why are we doing it this way?** One page serves both roles instead of a separate Super Admin route — see §4 issue #2 and §13 for why a full "Super Admin Diagnostics Panel" isn't built. Reusing this page for both roles also naturally demonstrates the exact tenant-isolation logic (`x-club-id` header vs. explicit `clubId`) that the backend implements.
+**Expected behavior:** Nothing visible yet — this step only builds the shared pieces the next three pages consume.
+**How to verify:** No standalone UI to check yet; verified together with Step 29.
+**Why are we doing it this way?** Three pages need this exact logic — a genuine case for a shared hook, unlike the Dashboard's three sections which shared nothing. Kept as a hook + a small presentational component rather than a Context, since nothing outside these three admin pages needs this value.
 
-#### Step 29 — Create-item form
+#### Step 29 — Build the Create Item page
 **Goal:** Publish new merchandise.
-**Files involved:** `frontend/src/pages/AdminPage.jsx`.
+**Files involved:** new `frontend/src/pages/CreateItemPage.jsx`; `App.jsx` (add `/admin/create-item`, role-restricted to `CLUB_ADMIN`/`SUPER_ADMIN`); `Navbar.jsx` (add a Create Item link, shown to both those roles).
 **Concepts I will learn:** conditionally showing a form field based on another field's value (type → sizes).
-**Implementation:** Fields: name, description, price, stock, type (`<select>` APPAREL/MUG/ACCESSORY). If type is `APPAREL` (required) or `ACCESSORY` (optional), show a text input for comma-separated sizes (e.g. `S,M,L`) split into an array on submit. On submit: `POST /catalog` with the resolved `clubId` (from Step 28's selection/JWT) included only when `role === 'SUPER_ADMIN'`.
-**Backend interaction:** `POST /catalog`.
+**Implementation:** Uses `useClubContext` + `<ClubPicker>` at the top; if no club is resolved yet (Super Admin hasn't picked one), show a prompt instead of the form. Fields: name, description, price, stock, type (`<select>` APPAREL/MUG/ACCESSORY). If type is `APPAREL` (required) or `ACCESSORY` (optional), show a text input for comma-separated sizes (e.g. `S,M,L`) split into an array on submit. On submit: `POST /catalog` with `clubId` included only when `role === 'SUPER_ADMIN'`.
+**Backend interaction:** `GET /clubs`, `POST /catalog`.
 **Expected behavior:** New item appears on `/catalog` afterward.
 **How to verify:** Create one APPAREL item and one MUG item; confirm the APPAREL one requires sizes (try submitting without any — expect the backend's `400`) and the MUG one doesn't.
 **Why are we doing it this way?** No dynamic "Factory Pattern UI" with per-type extra fields (volume, material, etc.) — those are optional freeform fields the backend happily ignores if absent, so building a form for them adds complexity with no functional payoff for a demo.
 
-#### Step 30 — List the club's items and set a delivery slot
+#### Step 30 — Build the Delivery Slots page
 **Goal:** Demonstrate the delivery-slot broadcast feature.
-**Files involved:** `frontend/src/pages/AdminPage.jsx`.
+**Files involved:** new `frontend/src/pages/DeliverySlotsPage.jsx`; `App.jsx` (add `/admin/delivery-slots`); `Navbar.jsx` (add a Delivery Slots link).
 **Concepts I will learn:** reusing the same `GET /catalog?clubId=` endpoint from the student-facing catalog for an admin-facing purpose.
-**Implementation:** Fetch `GET /catalog?clubId=<resolved clubId>`, list items with a small inline form per row: date/startTime/endTime inputs + "Set Slot" button → `PUT /catalog/:itemId/delivery-slot`.
-**Backend interaction:** `GET /catalog?clubId=`, `PUT /catalog/:itemId/delivery-slot`.
+**Implementation:** Uses `useClubContext` + `<ClubPicker>`. Fetch `GET /catalog?clubId=<resolved clubId>`, list items with a small inline form per row: date/startTime/endTime inputs + "Set Slot" button → `PUT /catalog/:itemId/delivery-slot`.
+**Backend interaction:** `GET /clubs`, `GET /catalog?clubId=`, `PUT /catalog/:itemId/delivery-slot`.
 **Expected behavior:** Setting a slot triggers a `delivery.slot.updated` event; any student who has ordered that item gets a notification (visible via Step 26/27).
 **How to verify:** As a student, place an order for an item; as that item's Club Admin, set a delivery slot; back on the student's `/notifications` page, confirm the notification appears within ~15 seconds.
 **Why are we doing it this way?** This is the clearest end-to-end demonstration of the RabbitMQ event flow (`catalog-service` → exchange → `notification-service` → Postgres) available anywhere in the app — worth calling out explicitly as a manual test, not just a code review.
 
-#### Step 31 — Club orders + mark delivered
+#### Step 31 — Build the Club Orders page
 **Goal:** Close the order lifecycle loop.
-**Files involved:** `frontend/src/pages/AdminPage.jsx`.
-**Concepts I will learn:** nothing new — same table + button-triggers-PATCH pattern as notifications.
-**Implementation:** Fetch `GET /orders/club` (with `?clubId=` appended only for `SUPER_ADMIN`). Table: order id, user id, item id, size, qty, status, date, with a "Mark Delivered" button shown only when `status === 'COMMITTED'`. Clicking it calls `PATCH /orders/:orderId/status` with `{status: 'DELIVERED'}` and updates that row in place.
-**Backend interaction:** `GET /orders/club`, `PATCH /orders/:orderId/status`.
-**Expected behavior:** Marking an order delivered updates its status and fires an `ORDER_DELIVERED` notification to the student.
+**Files involved:** new `frontend/src/pages/ClubOrdersPage.jsx`; `App.jsx` (add `/admin/orders`); `Navbar.jsx` (add a Club Orders link).
+**Concepts I will learn:** nothing new — same table + button-triggers-PATCH pattern as notifications; fetching two endpoints in parallel with `Promise.all` to enrich one list from another.
+**Implementation:** Uses `useClubContext` + `<ClubPicker>`. Fetches `GET /orders/club` (with `?clubId=` appended only for `SUPER_ADMIN`) **and** `GET /catalog?clubId=` in parallel, and looks each order's `catalog_item_id` up against the fetched item list to show a real item name instead of a raw Mongo id. Table: item name, student, size, qty, status, date, with a "Mark Delivered" button shown only when `status === 'COMMITTED'`. Clicking it calls `PATCH /orders/:orderId/status` with `{status: 'DELIVERED'}` and updates that row in place.
+**Backend interaction:** `GET /clubs`, `GET /orders/club`, `GET /catalog?clubId=`, `PATCH /orders/:orderId/status`.
+**Expected behavior:** Marking an order delivered updates its status and fires an `ORDER_DELIVERED` notification to the student. The item column shows a real name; the student column shows their email.
 **How to verify:** As a student, check `/orders` after the admin marks an order delivered — confirm both the order's status (Step 25) and a new notification on `/notifications` (Step 26) reflect it.
-**Why are we doing it this way?** Straightforward reuse of already-established patterns; no new concepts needed at this point in the build.
+**Why are we doing it this way?** `GET /orders/club` only ever returned `catalog_item_id` and `user_id` — genuinely not enough to identify "which item, which student" at a glance, which is the whole point of this page. Item name is resolved client-side (via the already-fetched club item list) since that's free — no backend change needed. Student email required a backend change: `student_email` is now denormalized onto the `orders` row at checkout time (same reasoning as `club_id` before it — the checkout handler already has the caller's email from their JWT, so this avoids a cross-service lookup on every read). See `services/order-service/db/migrate7.js` and `backfillStudentEmail.js`.
 
-#### Step 32 — (Super Admin only) Role promotion form
+#### Step 32 — (Super Admin only) Build the Promote User page
 **Goal:** Demonstrate the RBAC/tenant-isolation promotion capability.
-**Files involved:** `frontend/src/pages/AdminPage.jsx`.
-**Concepts I will learn:** nothing new — conditional rendering by role, a two-step form (look up, then act on the result).
-**Implementation:** Shown only if `user.role === 'SUPER_ADMIN'`. An email text input + "Find" button calls `GET /users/lookup?email=`; on `200`, show the found user's current `full_name`/`role`/`club_id` plus a role `<select>` (STUDENT/CLUB_ADMIN/SUPER_ADMIN) and — shown only when the selected role is `CLUB_ADMIN` — a club `<select>` (reusing the `GET /clubs` data from Step 28); on `404`, show "No user with that email." A "Promote" button then submits `PUT /users/:userId/role` using the `id` from the lookup response. If the looked-up user already has a non-null `club_id` (they're already a Club Admin somewhere), show that plainly next to their info before the admin even tries to promote — the backend also enforces this authoritatively (a `400` if attempted anyway), but surfacing it up front avoids a pointless round trip.
-**Backend interaction:** `GET /users/lookup?email=`, `PUT /users/:userId/role`.
-**Expected behavior:** Looking up a freshly-registered student's email, selecting `CLUB_ADMIN` and a club, and promoting lets that account subsequently use `/admin` for that club. Looking up a user who's already a Club Admin for another club and attempting to promote them again returns `400` — they must be demoted (e.g. back to `STUDENT`) first.
-**How to verify:** Register a throwaway account (Step 13), look it up here by email, promote it, log in as it, confirm `/admin` now shows that club. Then, as Super Admin, look that same (now-Club-Admin) user up again and attempt to promote them to a *different* club — confirm it's rejected with `400`.
+**Files involved:** new `frontend/src/pages/PromoteUserPage.jsx`; `App.jsx` (add `/admin/promote`, restricted to `SUPER_ADMIN` only); `Navbar.jsx` (add a Promote User link, Super Admin only).
+**Concepts I will learn:** nothing new — a two-step form (look up, then act on the result).
+**Implementation:** An email text input + "Find" button calls `GET /users/lookup?email=`; on `200`, show the found user's current `full_name`/`role`/`club_id` plus a role `<select>` (STUDENT/CLUB_ADMIN/SUPER_ADMIN) and — shown only when the selected role is `CLUB_ADMIN` — a club `<select>` (from this page's own `GET /clubs` fetch); on `404`, show "No user with that email." An "Update Role" button submits `PUT /users/:userId/role` using the `id` from the lookup response. If the looked-up user already has a non-null `club_id`, a warning is shown above the form (not blocking it) explaining they need to be set to `STUDENT` first before being assigned a different club — the form stays usable either way, since demoting *is* a legitimate action through this same form.
+**Backend interaction:** `GET /clubs`, `GET /users/lookup?email=`, `PUT /users/:userId/role`.
+**Expected behavior:** Looking up a freshly-registered student's email, selecting `CLUB_ADMIN` and a club, and promoting lets that account subsequently manage that club. Looking up a user who's already a Club Admin for another club and attempting to reassign them returns `400` — they must be set to `STUDENT` first.
+**How to verify:** Register a throwaway account (Step 13), look it up here by email, promote it, log in as it, confirm the admin pages now show that club. Then, as Super Admin, look that same (now-Club-Admin) user up again and attempt to assign them to a *different* club — confirm it's rejected with `400`.
 **Why are we doing it this way?** An email lookup is simpler and more natural for an admin to use than pasting a raw UUID, and required only a minimal exact-match endpoint (`GET /users/lookup`) rather than a full user directory/search feature — which stays explicitly out of scope (§15).
 
-#### Step 33 — (Super Admin only) Create Club form
+#### Step 33 — (Super Admin only) Build the Create Club page
 **Goal:** Let the Super Admin onboard a new club, per the finalized requirement (`REQUIREMENTS.md` FR5.3) that clubs are no longer fixed/pre-seeded-only data.
-**Files involved:** `frontend/src/pages/AdminPage.jsx`.
+**Files involved:** new `frontend/src/pages/CreateClubPage.jsx`; `App.jsx` (add `/admin/create-club`, restricted to `SUPER_ADMIN` only); `Navbar.jsx` (add a Create Club link, Super Admin only).
 **Concepts I will learn:** nothing new — another controlled form, same shape as Step 29's create-item form.
-**Implementation:** Shown only if `user.role === 'SUPER_ADMIN'`. Three fields: club name, description, and the new Club Admin's email. Submits `POST /clubs`. On success, show the created club and its assigned admin, and refresh the `GET /clubs` list from Step 28 so the new club immediately appears in the "acting club" dropdown. On `400`/`404`/`409`, show the backend's message directly (e.g. "No user found with that admin_email", "User is already assigned to a club...", "A club with that name already exists").
+**Implementation:** Three fields: club name, description, and the new Club Admin's email. Submits `POST /clubs`. On success, show the created club and its assigned admin. On `400`/`404`/`409`, show the backend's message directly (e.g. "No user found with that admin_email", "User is already assigned to a club...", "A club with that name already exists").
 **Backend interaction:** `POST /clubs`.
-**Expected behavior:** Creating a club with a `STUDENT`'s email promotes that student to `CLUB_ADMIN` for the new club in one action; the Super Admin can immediately select that club from the Step 28 dropdown afterward.
-**How to verify:** Register a second throwaway account (Step 13), create a club naming it as admin, confirm it appears in `GET /clubs`, then log in as that account and confirm `/admin` now shows it as their club.
+**Expected behavior:** Creating a club with a `STUDENT`'s email promotes that student to `CLUB_ADMIN` for the new club in one action; the new club is immediately selectable from `useClubContext`'s dropdown on the other admin pages afterward (it fetches `GET /clubs` fresh on each page visit).
+**How to verify:** Register a second throwaway account (Step 13), create a club naming it as admin, confirm it appears in `GET /clubs`, then log in as that account and confirm the Create Item page now shows it as their club.
 **Why are we doing it this way?** Club creation and admin assignment happen in a single backend call (one DB transaction), so the form mirrors that exactly — no separate "create club" then "assign admin" steps to keep in sync on the frontend.
 
 ### Phase 9 — Final Manual QA Pass
@@ -739,7 +756,7 @@ White background, black text, system font, one shared `index.css`:
 **Goal:** Confirm every flow works together, not just in isolation.
 **Files involved:** none (manual QA).
 **Concepts I will learn:** how to structure a manual test pass.
-**Implementation:** Using the pre-seeded accounts documented in the root `.env` comments (one Student, one Club Admin, the Super Admin), walk through: register a new student → log in → browse catalog → check out an item → see it in your orders → (as that item's Club Admin) set a delivery slot and mark the order delivered → (as the student again) confirm both notifications arrived. Then, as Super Admin: create a new club assigning a freshly-registered student as its admin, look up an existing user by email and promote them, and confirm both newly-promoted accounts can use `/admin` for their respective clubs.
+**Implementation:** Using the pre-seeded accounts documented in the root `.env` comments (one Student, one Club Admin, the Super Admin), walk through: register a new student → log in → browse catalog → check out an item → see it in your orders → (as that item's Club Admin) set a delivery slot and mark the order delivered → (as the student again) confirm both notifications arrived. Then, as Super Admin: create a new club assigning a freshly-registered student as its admin, look up an existing user by email and promote them, and confirm both newly-promoted accounts can use the `/admin/*` pages for their respective clubs.
 **Backend interaction:** All of it.
 **Expected behavior:** No dead ends, no unhandled errors in the browser console.
 **How to verify:** The walkthrough itself is the verification.
@@ -836,6 +853,8 @@ frontend/
     ├── Navbar.jsx
     ├── ProtectedRoute.jsx
     ├── AuthContext.jsx        (AuthProvider, useAuth, decodeJwt)
+    ├── useClubContext.js      (hook: resolves the acting club for admin pages)
+    ├── ClubPicker.jsx         (renders useClubContext's result)
     ├── api.js                 (apiFetch)
     ├── index.css
     └── pages/
@@ -846,10 +865,14 @@ frontend/
         ├── ProfilePage.jsx
         ├── OrdersPage.jsx
         ├── NotificationsPage.jsx
-        └── AdminPage.jsx          (Create item + Delivery slots + Club orders + User lookup/promotion + Create club sections)
+        ├── CreateItemPage.jsx
+        ├── DeliverySlotsPage.jsx
+        ├── ClubOrdersPage.jsx
+        ├── PromoteUserPage.jsx
+        └── CreateClubPage.jsx
 ```
 
-15 source files (Profile/Orders/Notifications became three separate files instead of one shared `DashboardPage.jsx` — see the Phase 7 revision note). No `components/`, `hooks/`, `services/`, or `utils/` directories — everything that would live in them is small enough to sit directly in the file that uses it. Tailwind is wired via `@tailwindcss/vite` in `vite.config.js` and a one-line `@import "tailwindcss";` in `index.css` — no separate Tailwind config file needed (v4's zero-config setup).
+19 source files. Profile/Orders/Notifications became three separate files instead of one shared `DashboardPage.jsx` (Phase 7 revision note), and the same happened to `AdminPage.jsx` → five pages + `useClubContext.js` + `ClubPicker.jsx` (Phase 8 revision note). No `hooks/`, `services/`, or `utils/` directories — the two shared admin files just sit flat under `src/` rather than in their own folder, since there are only two of them. Tailwind is wired via `@tailwindcss/vite` in `vite.config.js` and a one-line `@import "tailwindcss";` in `index.css` — no separate Tailwind config file needed (v4's zero-config setup).
 
 ## 17. API Dependency Map
 
@@ -894,13 +917,37 @@ GET/PATCH /notifications (polled every 15s)
       ↓
 notification-service (Postgres)
 
-AdminPage
+CreateItemPage (useClubContext: GET /clubs)
       ↓
-GET /clubs → POST /catalog / PUT /catalog/:id/delivery-slot → GET /orders/club → PATCH /orders/:id/status → GET /users/lookup → PUT /users/:id/role → POST /clubs
-      ↓                              ↓                                ↓                    ↓                      ↓                    ↓                  ↓
-user-service              catalog-service (+ RabbitMQ            order-service       order-service (+       user-service          user-service      user-service
-                           "delivery.slot.updated" →                                  RabbitMQ "order.delivered" →                                    (transactional:
-                           notification-service)                                       notification-service)                                          club + admin)
+POST /catalog
+      ↓
+catalog-service (MongoDB)
+
+DeliverySlotsPage (useClubContext: GET /clubs)
+      ↓
+GET /catalog?clubId=   →   PUT /catalog/:id/delivery-slot
+      ↓                              ↓
+catalog-service (MongoDB)   catalog-service (+ RabbitMQ "delivery.slot.updated" → notification-service)
+
+ClubOrdersPage (useClubContext: GET /clubs)
+      ↓
+GET /orders/club   +   GET /catalog?clubId= (item names)   →   PATCH /orders/:id/status
+      ↓                              ↓                                    ↓
+order-service (Postgres,           catalog-service                order-service (+ RabbitMQ "order.delivered"
+incl. denormalized                 (MongoDB)                       → notification-service)
+student_email)
+
+PromoteUserPage
+      ↓
+GET /clubs   →   GET /users/lookup?email=   →   PUT /users/:id/role
+      ↓                    ↓                              ↓
+user-service        user-service                   user-service
+
+CreateClubPage
+      ↓
+POST /clubs (transactional: club + admin)
+      ↓
+user-service (Postgres)
 ```
 
 ## 18. Implementation Order (flat list)

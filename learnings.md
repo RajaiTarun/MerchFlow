@@ -66,3 +66,19 @@ Problems hit during development + how they were solved. Kept short for interview
 
 ---
 
+### 6. Club Orders showed a raw item id and no student info - denormalized student_email onto orders instead of a new lookup endpoint
+
+**Problem:** `GET /orders/club` only ever returned `catalog_item_id` and `user_id` — no item name, no way to tell which student placed an order. Found via frontend testing of the Club Admin's order-fulfillment page.
+
+**Two different fixes for two different root causes:**
+- **Item name:** resolvable client-side for free — the admin page was already fetching the club's item list (`GET /catalog?clubId=`) for the delivery-slot feature, so the order rows just look the id up against that already-fetched list. No backend change needed.
+- **Student email:** genuinely not available anywhere without either (a) a new lookup endpoint, or (b) denormalizing it. Chose (b), following the exact precedent already set by `club_id` on this same table (`migrate6.js`/`backfillClubId.js`): the checkout handler already has the student's email sitting in the decoded JWT (it was already being used to build the `studentEmail` field on the `OrderPlaced` RabbitMQ event) — persisting it into the `orders` row at insert time means every future read is free, no cross-service call, no new endpoint, no new permission-scope question.
+
+**Why not a new endpoint:** the obvious alternative — a `GET /users/by-ids` batch lookup — would have meant deciding whether Club Admins should be allowed to resolve arbitrary user info at all. Right now only `SUPER_ADMIN` can do that (`GET /users/lookup`, email-only). Denormalizing sidesteps the question entirely: `student_email` becomes just another column on a row already scoped by `club_id`.
+
+**Fix:** `migrate7.js` adds the nullable column; `backfillStudentEmail.js` fills in pre-existing rows (calling `GET /profile/:userId` with `x-user-id` set to that same id, mirroring how the live checkout flow already satisfies that endpoint's ownership check); the checkout `INSERT` now includes `decoded.email`; `GET /orders/club`'s `SELECT` now returns it. Verified both paths live: backfilled 5 pre-existing orders correctly, then placed a brand-new real checkout and confirmed the response already carried the right `student_email` with no backfill needed.
+
+**Takeaway:** before reaching for a new endpoint to resolve "id → readable info," check whether the writer already had that info in hand at write time. If it did, denormalizing avoids a whole category of decisions (extra latency, new permission scope, cache invalidation for yet another endpoint) that a read-time lookup would force. The tradeoff (a snapshot, not a live value) is often *correct* for exactly this kind of record — an order should show who placed it *at the time*, the same way a shipping label freezes a name at the moment of shipping.
+
+---
+

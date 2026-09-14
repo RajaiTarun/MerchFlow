@@ -8,7 +8,13 @@ import ItemDetailPage from './pages/ItemDetailPage.jsx'
 import ProfilePage from './pages/ProfilePage.jsx'
 import OrdersPage from './pages/OrdersPage.jsx'
 import NotificationsPage from './pages/NotificationsPage.jsx'
-import AdminPage from './pages/AdminPage.jsx'
+import CreateItemPage from './pages/CreateItemPage.jsx'
+import DeliverySlotsPage from './pages/DeliverySlotsPage.jsx'
+import ClubOrdersPage from './pages/ClubOrdersPage.jsx'
+import PromoteUserPage from './pages/PromoteUserPage.jsx'
+import CreateClubPage from './pages/CreateClubPage.jsx'
+
+const CLUB_ADMIN_ROLES = ['CLUB_ADMIN', 'SUPER_ADMIN']
 
 function App() {
   return (
@@ -60,10 +66,42 @@ function App() {
             }
           />
           <Route
-            path="/admin"
+            path="/admin/create-item"
             element={
-              <ProtectedRoute roles={['CLUB_ADMIN', 'SUPER_ADMIN']}>
-                <AdminPage />
+              <ProtectedRoute roles={CLUB_ADMIN_ROLES}>
+                <CreateItemPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/delivery-slots"
+            element={
+              <ProtectedRoute roles={CLUB_ADMIN_ROLES}>
+                <DeliverySlotsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/orders"
+            element={
+              <ProtectedRoute roles={CLUB_ADMIN_ROLES}>
+                <ClubOrdersPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/promote"
+            element={
+              <ProtectedRoute roles={['SUPER_ADMIN']}>
+                <PromoteUserPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/create-club"
+            element={
+              <ProtectedRoute roles={['SUPER_ADMIN']}>
+                <CreateClubPage />
               </ProtectedRoute>
             }
           />
