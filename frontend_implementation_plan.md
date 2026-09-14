@@ -83,9 +83,9 @@ Note: registration does **not** accept a `preferred_size` (unlike what the old s
 | Feature | Method | Path | Auth | Role | Request | Success | Key errors |
 |---|---|---|---|---|---|---|---|
 | Checkout | POST | `/orders` | Yes | any authenticated role | Headers: `Idempotency-Key: <uuid>` (required). Body: `{catalogItemId, quantity=1, selectedSize?, mockCardNumber}` | `201 {message, order}` (or `200` on idempotent replay) | see full table in §8 |
-| My orders | GET | `/orders` | Yes | any | — | `200 {orders:[{id,catalog_item_id,selected_size,quantity,status,created_at}]}` | — |
+| My orders | GET | `/orders` | Yes | any | — | `200 {orders:[{id,catalog_item_id,item_name,selected_size,quantity,status,created_at}]}` (`item_name` added 2026-09-14, denormalized same as `student_email` below) | — |
 | Order detail | GET | `/orders/:id` | Yes | owner only | — | `200 {order}` | `403` not yours, `404`, `400` bad id |
-| Club's orders | GET | `/orders/club?clubId=` | Yes | `CLUB_ADMIN` (own club, auto) / `SUPER_ADMIN` (`clubId` query param required) | — | `200 {orders:[{id,user_id,student_email,catalog_item_id,selected_size,quantity,status,created_at}]}` (`student_email` added 2026-09-14 — denormalized onto `orders` at checkout time so this route can show who placed an order without a cross-service lookup; see `migrate7.js`) | `403`, `400` |
+| Club's orders | GET | `/orders/club?clubId=` | Yes | `CLUB_ADMIN` (own club, auto) / `SUPER_ADMIN` (`clubId` query param required) | — | `200 {orders:[{id,user_id,student_email,catalog_item_id,item_name,selected_size,quantity,status,created_at}]}` (`student_email` and `item_name` both denormalized onto `orders` at checkout time — 2026-09-14 — so this route can show who ordered what without any cross-service lookup; see `migrate7.js`/`migrate8.js`) | `403`, `400` |
 | Mark delivered | PATCH | `/orders/:orderId/status` | Yes | `CLUB_ADMIN` (own club) / `SUPER_ADMIN` | `{status: "DELIVERED"}` (only value accepted; order must currently be `COMMITTED`) | `200 {message, order}` | `400` wrong current status, `403` not your club's order, `404` |
 | *Users by item* | GET | `/orders/by-item/:catalogItemId/users` | **Internal only** — used by notification-service | — | — | — | **Do not call from frontend** |
 
@@ -168,6 +168,7 @@ Super Admin picks one from GET /clubs, Club Admin's is implicit from the JWT)
 1. ~~**No "list/search users" endpoint exists.**~~ — **partially addressed 2026-09-11.** There's still no full user directory/search (and none is planned — see §15), but a minimal exact-match `GET /users/lookup?email=` (`SUPER_ADMIN` only) now exists specifically to back the promotion form: Super Admin types an email, gets back `{id, email, full_name, role, club_id}`, then promotes using the returned `id`. The Admin page's promotion form (Step 32) now uses this instead of a raw UUID input.
 2. ~~**No club-creation endpoint exists.**~~ — **fixed 2026-09-11.** `POST /clubs` (`SUPER_ADMIN` only) now creates a club and assigns an admin (by email) in one transaction, promoting that user to `CLUB_ADMIN` if they were a `STUDENT`. The finalized requirements spec (`REQUIREMENTS.md` FR5.3) made this official Super Admin functionality, not optional — the Admin page's club selector (Step 28) stays a simple dropdown from `GET /clubs` for choosing which club to act as, and a separate "Create Club" form is Step 33.
 3. ~~**The rate limiter's Valkey key was `rate_limit:${req.ip}` for *both* the catalog limiter and the orders limiter**~~ — **fixed 2026-09-11.** They were sharing one bucket per IP because the key didn't encode which limiter was running; `createRateLimiter` now takes a `name` and keys off `rate_limit:${name}:${req.ip}`, so catalog and orders each get their own bucket. The configured limit is still **1000 requests/min** per bucket in the current code (not the 100/5 documented in `SECURITY_AND_ACCESS.md`), so this is very unlikely to surface during manual testing either way. Also note: since rate limiting is per-IP, testing multiple seeded accounts from one machine still shares one bucket per route.
+   ~~**Second bug in the same file, fixed 2026-09-14:**~~ the check-then-decrement was two separate Valkey round trips (`GET` then `DECR`), not atomic — concurrent requests from the same IP could all read the same "tokens left" value before any decremented, driving the counter negative. Hit live during manual testing: a bucket got stuck exhausted with no expiry at all, permanently blocking `POST /catalog`. Fixed with a single atomic Lua script (`RATE_LIMIT_SCRIPT` in `rateLimiter.js`, same technique as the distributed lock's `LUA_RELEASE_LOCK`) that also defensively re-applies the key's expiry if it's ever found missing. Verified: 50 truly concurrent requests landed the counter at exactly `950`, not negative; an exhausted key with no TTL self-healed to a fresh 60s window on the very next request. See `learnings.md` #9.
 4. **No circuit breaker, health-aggregation, or queue-depth endpoint exists anywhere** — see §1. The "Super Admin Diagnostics Panel" from the old spec is dropped from scope entirely (§12).
 
 The following were previously flagged here as gaps but are confirmed intentional, current behavior — not tracked as issues: checkout has no `STUDENT`-only role check (any authenticated role can place an order), internal-only catalog/order endpoints are technically reachable through the public gateway, registration doesn't accept a preferred size, JWTs are not refreshed (1-hour flat expiry), and a failed mock payment never creates an order row. The frontend is built to work correctly with all of this as-is.
@@ -195,7 +196,7 @@ Twelve routes, backed by ~19 files total. No `Button.jsx`/`Card.jsx`/`Input.jsx`
 | `/notifications` | `NotificationsPage` | Notification inbox, polled | `GET/PATCH /notifications` | Any logged-in user |
 | `/admin/create-item` | `CreateItemPage` | Publish merchandise | `GET /clubs`, `POST /catalog` | `CLUB_ADMIN` / `SUPER_ADMIN` |
 | `/admin/delivery-slots` | `DeliverySlotsPage` | Set delivery slots on the club's items | `GET /clubs`, `GET /catalog?clubId=`, `PUT /catalog/:id/delivery-slot` | `CLUB_ADMIN` / `SUPER_ADMIN` |
-| `/admin/orders` | `ClubOrdersPage` | View + fulfill the club's orders | `GET /clubs`, `GET /orders/club`, `GET /catalog?clubId=`, `PATCH /orders/:id/status` | `CLUB_ADMIN` / `SUPER_ADMIN` |
+| `/admin/orders` | `ClubOrdersPage` | View + fulfill the club's orders | `GET /clubs`, `GET /orders/club`, `PATCH /orders/:id/status` | `CLUB_ADMIN` / `SUPER_ADMIN` |
 | `/admin/promote` | `PromoteUserPage` | Look up a user by email, change their role | `GET /clubs`, `GET /users/lookup`, `PUT /users/:id/role` | `SUPER_ADMIN` only |
 | `/admin/create-club` | `CreateClubPage` | Create a club + assign its admin | `POST /clubs` | `SUPER_ADMIN` only |
 
@@ -230,7 +231,7 @@ That's it — no `hooks/`, `services/`, or `components/` folders; the two shared
 | Acting club (`clubs`, `selectedClubId`) | `useClubContext` hook, called from `CreateItemPage`, `DeliverySlotsPage`, `ClubOrdersPage` | Genuinely shared logic across three pages — the one case among the admin pages worth lifting into a hook rather than duplicating. |
 | Create-item form | Local `useState` in `CreateItemPage` | Scoped to that page only. |
 | Delivery-slot inputs per item | Local `useState` in `DeliverySlotsPage` | Scoped to that page only. |
-| Club's orders, club's items (for name lookup) | Local `useState` in `ClubOrdersPage` | Scoped to that page only. |
+| Club's orders | Local `useState` in `ClubOrdersPage` | Scoped to that page only. |
 | User-lookup/promotion form | Local `useState` in `PromoteUserPage` | Scoped to that page only. |
 | Create-club form | Local `useState` in `CreateClubPage` | Scoped to that page only. |
 
@@ -658,7 +659,7 @@ White background, black text, system font, one shared `index.css`:
 **Goal:** Show order history.
 **Files involved:** new `frontend/src/pages/OrdersPage.jsx`; `App.jsx` (add the `/orders` route); `Navbar.jsx` (add an Orders link).
 **Concepts I will learn:** rendering a table from an array, formatting a status value.
-**Implementation:** On mount, `GET /orders`. Render a table: item id, size, quantity, status, date. (Item *names* aren't available from this endpoint — it only returns `catalog_item_id` — so each row shows a "View item" link to `/catalog/:catalog_item_id` instead of trying to resolve the name. Not worth an extra join/fetch per row for this minimal UI.)
+**Implementation:** On mount, `GET /orders`. Render a table: item name (as a link to `/catalog/:catalog_item_id`), size, quantity, status, date. `item_name` is returned directly by the endpoint (denormalized onto `orders` at checkout time — added 2026-09-14, see the Step 31 revision below — originally this showed a raw "View item" link instead, before that fix).
 **Backend interaction:** `GET /orders`.
 **Expected behavior:** After placing an order (Phase 6), it appears here with status `COMMITTED`.
 **How to verify:** Place an order, visit `/orders`, confirm it's listed.
@@ -723,12 +724,12 @@ Also fixed while building the Club Orders page: it was showing a raw `catalog_it
 #### Step 31 — Build the Club Orders page
 **Goal:** Close the order lifecycle loop.
 **Files involved:** new `frontend/src/pages/ClubOrdersPage.jsx`; `App.jsx` (add `/admin/orders`); `Navbar.jsx` (add a Club Orders link).
-**Concepts I will learn:** nothing new — same table + button-triggers-PATCH pattern as notifications; fetching two endpoints in parallel with `Promise.all` to enrich one list from another.
-**Implementation:** Uses `useClubContext` + `<ClubPicker>`. Fetches `GET /orders/club` (with `?clubId=` appended only for `SUPER_ADMIN`) **and** `GET /catalog?clubId=` in parallel, and looks each order's `catalog_item_id` up against the fetched item list to show a real item name instead of a raw Mongo id. Table: item name, student, size, qty, status, date, with a "Mark Delivered" button shown only when `status === 'COMMITTED'`. Clicking it calls `PATCH /orders/:orderId/status` with `{status: 'DELIVERED'}` and updates that row in place.
-**Backend interaction:** `GET /clubs`, `GET /orders/club`, `GET /catalog?clubId=`, `PATCH /orders/:orderId/status`.
+**Concepts I will learn:** nothing new — same table + button-triggers-PATCH pattern as notifications.
+**Implementation:** Uses `useClubContext` + `<ClubPicker>`. Fetches `GET /orders/club` (with `?clubId=` appended only for `SUPER_ADMIN`) — a single fetch, since `item_name` and `student_email` are both already present on each order object. Table: item name, student, size, qty, status, date, with a "Mark Delivered" button shown only when `status === 'COMMITTED'`. Clicking it calls `PATCH /orders/:orderId/status` with `{status: 'DELIVERED'}` and updates that row in place.
+**Backend interaction:** `GET /clubs`, `GET /orders/club`, `PATCH /orders/:orderId/status`.
 **Expected behavior:** Marking an order delivered updates its status and fires an `ORDER_DELIVERED` notification to the student. The item column shows a real name; the student column shows their email.
 **How to verify:** As a student, check `/orders` after the admin marks an order delivered — confirm both the order's status (Step 25) and a new notification on `/notifications` (Step 26) reflect it.
-**Why are we doing it this way?** `GET /orders/club` only ever returned `catalog_item_id` and `user_id` — genuinely not enough to identify "which item, which student" at a glance, which is the whole point of this page. Item name is resolved client-side (via the already-fetched club item list) since that's free — no backend change needed. Student email required a backend change: `student_email` is now denormalized onto the `orders` row at checkout time (same reasoning as `club_id` before it — the checkout handler already has the caller's email from their JWT, so this avoids a cross-service lookup on every read). See `services/order-service/db/migrate7.js` and `backfillStudentEmail.js`.
+**Why are we doing it this way?** `GET /orders/club` originally only returned `catalog_item_id` and `user_id` — genuinely not enough to identify "which item, which student" at a glance, which is the whole point of this page. **Revision (2026-09-14):** initially fixed by having the frontend also fetch `GET /catalog?clubId=` and resolve item names client-side (free, since that page needs no backend change), while `student_email` got denormalized onto `orders` at checkout time (a real backend change — the checkout handler already has the caller's email from their JWT). Shortly after, `item_name` was denormalized the same way (the checkout handler already has the item's name in hand too), which let the client-side lookup — and the whole second fetch, `items` state, and `itemName()` helper — be deleted entirely. Both columns are now just direct fields on the order object, with zero extra reads. See `services/order-service/db/migrate7.js`/`migrate8.js` and their matching `backfill*.js` scripts.
 
 #### Step 32 — (Super Admin only) Build the Promote User page
 **Goal:** Demonstrate the RBAC/tenant-isolation promotion capability.
@@ -931,11 +932,11 @@ catalog-service (MongoDB)   catalog-service (+ RabbitMQ "delivery.slot.updated" 
 
 ClubOrdersPage (useClubContext: GET /clubs)
       ↓
-GET /orders/club   +   GET /catalog?clubId= (item names)   →   PATCH /orders/:id/status
-      ↓                              ↓                                    ↓
-order-service (Postgres,           catalog-service                order-service (+ RabbitMQ "order.delivered"
-incl. denormalized                 (MongoDB)                       → notification-service)
-student_email)
+GET /orders/club   →   PATCH /orders/:id/status
+      ↓                              ↓
+order-service (Postgres,       order-service (+ RabbitMQ "order.delivered"
+incl. denormalized              → notification-service)
+student_email + item_name)
 
 PromoteUserPage
       ↓

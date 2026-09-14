@@ -10,7 +10,6 @@ function ClubOrdersPage() {
   const { isSuperAdmin, resolvedClubId } = clubContext
 
   const [orders, setOrders] = useState([])
-  const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
@@ -20,24 +19,11 @@ function ClubOrdersPage() {
     setError(null)
 
     const query = isSuperAdmin ? `?clubId=${resolvedClubId}` : ''
-    Promise.all([
-      apiFetch(`/orders/club${query}`, { token }),
-      // The club's own item list, fetched here too, purely so order rows can
-      // show a real item name instead of a raw catalog_item_id - GET /orders/club
-      // doesn't return item names itself.
-      apiFetch(`/catalog?clubId=${resolvedClubId}`, { token }),
-    ])
-      .then(([ordersData, itemsData]) => {
-        setOrders(ordersData.orders)
-        setItems(itemsData.items)
-      })
+    apiFetch(`/orders/club${query}`, { token })
+      .then((data) => setOrders(data.orders))
       .catch((err) => setError(err.body?.error || err.message))
       .finally(() => setLoading(false))
   }, [token, resolvedClubId, isSuperAdmin])
-
-  function itemName(catalogItemId) {
-    return items.find((i) => i._id === catalogItemId)?.name || catalogItemId
-  }
 
   async function markDelivered(orderId) {
     try {
@@ -82,7 +68,7 @@ function ClubOrdersPage() {
               <tbody>
                 {orders.map((order) => (
                   <tr key={order.id} className="border-b border-gray-200">
-                    <td className="py-2 pr-2">{itemName(order.catalog_item_id)}</td>
+                    <td className="py-2 pr-2">{order.item_name || order.catalog_item_id}</td>
                     <td className="py-2 pr-2">{order.student_email || order.user_id}</td>
                     <td className="py-2 pr-2">{order.selected_size || '-'}</td>
                     <td className="py-2 pr-2">{order.quantity}</td>

@@ -82,3 +82,40 @@ Problems hit during development + how they were solved. Kept short for interview
 
 ---
 
+### 7. Same lesson, one order sooner: denormalized item_name too, and it deleted code instead of adding it
+
+**Follow-up finding:** the student's own "My Orders" page (`GET /orders`) had the identical problem `GET /orders/club` had for item names — only `catalog_item_id` available, no name. The naive fix (client-side resolution) doesn't even work cleanly here the way it did for the club-scoped page: a student's orders can span *any* club's items, so there's no single `?clubId=` to fetch a lookup list from — it would need paging through the entire catalog, or N individual `GET /catalog/:id` calls, every page load.
+
+**Fix:** applied the exact same denormalization as #6 — `item_name` added to `orders` (`migrate8.js`/`backfillItemName.js`), populated at checkout time from `item.name` (already fetched during checkout, already used for the `OrderPlaced` event's `itemName` field — third reuse of data the handler already had).
+
+**Bonus this time:** since `ClubOrdersPage` had *only* been fetching the club's item list to resolve names (nothing else used that `items` state), denormalizing let that whole second fetch — the `Promise.all`, the `items` state, and the `itemName()` helper — be deleted outright. The fix didn't just avoid adding a lookup; it let an existing one be removed.
+
+**Takeaway:** when the same "id with no readable label" shape shows up a second time, check whether the *first* fix's technique still applies before reusing it blindly — client-side resolution only worked for Club Orders because it was scoped to one club; it wouldn't have generalized to a page with no such scope. Denormalization, once adopted for one field, tends to compound: the second field is nearly free to add (same migration/backfill pattern, same insert-time data source), and it can retroactively simplify code written before the pattern existed.
+
+---
+
+### 8. Notifications "update on their own" via polling, not push
+
+**Verified during manual QA:** the Notifications page picks up new notifications without a manual refresh. There's no WebSocket or SSE anywhere in this backend — it's a plain `setInterval(fetchNotifications, 15000)` inside a `useEffect` (with `clearInterval` on unmount) in `NotificationsPage.jsx`, just re-fetching `GET /notifications` every 15s and replacing the list.
+
+**Takeaway:** "live-updating UI" doesn't require real-time infrastructure if the freshness bar is "a human notices within ~15 seconds," not "instant." Polling is the simplest thing that satisfies the actual requirement here, and it's honest about what's really happening — no fake real-time claims. The same pattern (light polling) was also used for item-detail stock freshness (#5).
+
+---
+
+### 9. Rate limiter's check-then-decrement wasn't atomic — got a real, permanently-stuck bucket during manual testing
+
+**Problem:** hit live while manually testing the Create Item form as a Club Admin — got `RATE_LIMITED` on an ordinary request, no burst of traffic to explain it. Investigating in Valkey directly: the bucket's counter had gone negative-or-zero *and* had **no expiry at all** (`PTTL` = -1, meaning "never expires"). Since the check (`if (parseInt(current) <= 0)`) never resets a key, and nothing else ever deletes it, a key in this state blocks that IP **forever**, not just for the intended 60-second window.
+
+**Root cause:** `createRateLimiter`'s check-then-decrement was two separate Valkey round trips — `GET` to read the count, then `DECR` to consume a token — not one atomic operation. Two concurrent requests from the same IP (very plausible here: multiple browser tabs, 10s item-detail stock polling, and heavy manual+automated testing all sharing one machine's IP) can both `GET` the same "1 token left" value before either has `DECR`'d, so both pass the `> 0` check and both decrement — driving the counter below zero instead of stopping cleanly at 0. That explains the negative counter. The missing TTL is a separate, less certain factor — likely related to the Valkey connectivity blips hit repeatedly during this project (see the entries in this file about `ETIMEDOUT`/`EHOSTUNREACH` requiring backend restarts) — but regardless of that story, the race condition itself was real, reproducible, and worth fixing on its own.
+
+**Fix:** replaced the two-step check with one atomic Lua script (`RATE_LIMIT_SCRIPT`), the same technique this codebase already uses for the distributed lock's `LUA_RELEASE_LOCK` — Redis/Valkey executes a Lua script as a single atomic unit, so no other command can interleave between the read and the decrement. The script also defensively re-applies the key's expiry (`PEXPIRE`) on every path if it's ever found missing, so a bucket can self-heal instead of getting permanently stuck even if something *does* strip its TTL again in the future.
+
+**Verified:**
+- Fired 50 truly concurrent requests (`xargs -P 50`) at a fresh bucket (limit 1000) → counter landed at exactly `950`, not negative — proves the race is gone.
+- Manually expired a key, waited past expiry, confirmed the next request started a brand-new window at `999` with a fresh TTL — proves normal regeneration works.
+- Manually recreated the exact stuck-forever bug (counter `0`, no TTL at all) and confirmed the very next request self-healed it to a fresh 60s TTL instead of staying stuck.
+
+**Takeaway:** "check a value, then act on it" across two separate network calls is never safe under concurrency, even for something as simple as a counter — this is the identical class of bug idempotency keys and distributed locks exist to prevent elsewhere in this same codebase, just easier to miss in a 5-line rate limiter than in the checkout flow. When a bug shows up as "permanently stuck" rather than "occasionally wrong," check whether the fix should also be defensive (self-healing on next use), not just correct for the normal path — a purely atomic fix would have stopped the counter going negative, but wouldn't by itself have recovered a key that already lost its TTL some other way.
+
+---
+

@@ -355,11 +355,12 @@ module.exports = (pool, redis) => {
             }
 
             // saving this order record in PostgreSQL
-            // student_email is denormalized from the caller's own JWT (same
-            // reasoning as club_id above it) so club-scoped order views can
-            // show who placed an order without a cross-service lookup.
+            // student_email and item_name are both denormalized from data the
+            // handler already has in hand (the caller's own JWT, and the
+            // catalog item already fetched above) so order-history views can
+            // show who ordered what without a cross-service lookup on every read.
             const result = await pool.query(`
-INSERT INTO orders(user_id, catalog_item_id, club_id, selected_size, quantity, status, idempotency_key, student_email) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *
+INSERT INTO orders(user_id, catalog_item_id, club_id, selected_size, quantity, status, idempotency_key, student_email, item_name) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *
 `, [
                 orderCommand.userId,
                 orderCommand.catalogItemId,
@@ -368,7 +369,8 @@ INSERT INTO orders(user_id, catalog_item_id, club_id, selected_size, quantity, s
                 orderCommand.quantity,
                 orderCommand.status,
                 orderCommand.idempotencyKey,
-                decoded.email
+                decoded.email,
+                item.name
             ]);
 
             // ── AC1: Commit Reservation in Catalog ──
@@ -495,7 +497,7 @@ INSERT INTO orders(user_id, catalog_item_id, club_id, selected_size, quantity, s
 
         try {
             const result = await pool.query(
-                `SELECT id, catalog_item_id, selected_size, quantity, status, created_at
+                `SELECT id, catalog_item_id, item_name, selected_size, quantity, status, created_at
                  FROM orders WHERE user_id = $1 ORDER BY created_at DESC`,
                 [userId]
             );
@@ -544,7 +546,7 @@ INSERT INTO orders(user_id, catalog_item_id, club_id, selected_size, quantity, s
 
         try {
             const result = await pool.query(
-                `SELECT id, user_id, student_email, catalog_item_id, selected_size, quantity, status, created_at
+                `SELECT id, user_id, student_email, catalog_item_id, item_name, selected_size, quantity, status, created_at
                  FROM orders WHERE club_id = $1 ORDER BY created_at DESC`,
                 [clubId]
             );

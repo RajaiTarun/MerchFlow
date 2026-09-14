@@ -14,6 +14,13 @@ function PromoteUserPage() {
 
   const [email, setEmail] = useState('')
   const [foundUser, setFoundUser] = useState(null)
+  // Whether the LOOKUP (not the current foundUser state) found an existing
+  // club assignment. Kept separate from foundUser.club_id because a
+  // successful update also sets foundUser.club_id (to the club they were
+  // just correctly assigned) - using foundUser.club_id directly would make
+  // the "already assigned, demote first" warning reappear right after a
+  // perfectly successful promotion, alongside the success message.
+  const [hadClubAtLookup, setHadClubAtLookup] = useState(false)
   const [lookupError, setLookupError] = useState(null)
   const [newRole, setNewRole] = useState('CLUB_ADMIN')
   const [newClubId, setNewClubId] = useState('')
@@ -24,6 +31,7 @@ function PromoteUserPage() {
     e.preventDefault()
     setLookupError(null)
     setFoundUser(null)
+    setHadClubAtLookup(false)
     setUpdateMessage(null)
     setUpdateError(null)
 
@@ -32,6 +40,7 @@ function PromoteUserPage() {
         token,
       })
       setFoundUser(data.user)
+      setHadClubAtLookup(Boolean(data.user.club_id))
     } catch (err) {
       setLookupError(err.body?.error || err.message)
     }
@@ -55,6 +64,10 @@ function PromoteUserPage() {
       })
       setUpdateMessage(`${data.user.email} is now ${data.user.role}.`)
       setFoundUser(data.user)
+      // The update just succeeded, so whatever club situation existed before
+      // is resolved now - never show the "already assigned" warning after a
+      // successful change.
+      setHadClubAtLookup(false)
     } catch (err) {
       setUpdateError(err.body?.error || err.message)
     }
@@ -93,7 +106,7 @@ function PromoteUserPage() {
           </p>
           <p className="text-sm text-gray-600 mb-3">Current role: {foundUser.role}</p>
 
-          {foundUser.club_id && (
+          {hadClubAtLookup && (
             <p className="text-red-600 text-sm mb-3">
               This user is already assigned to a club. To move them to a different
               club, set their role to STUDENT here first, then look them up again

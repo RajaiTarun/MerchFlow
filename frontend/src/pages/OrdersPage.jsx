@@ -43,7 +43,7 @@ function OrdersPage() {
                     to={`/catalog/${order.catalog_item_id}`}
                     className="text-blue-600 hover:underline"
                   >
-                    View item
+                    {order.item_name || 'View item'}
                   </Link>
                 </td>
                 <td className="py-2 pr-2">{order.selected_size || '-'}</td>
