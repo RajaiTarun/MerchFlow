@@ -2,7 +2,7 @@
   "private": true,
   "name": "ccmms",
   "version": "1.0.0",
-  "description": "",
+  "description": "Polyglot microservices platform for a campus merchandise marketplace — distributed locking, saga rollback, and event-driven notifications behind flash-sale checkout.",
   "main": "index.js",
   "directories": {
     "doc": "docs"
@@ -11,9 +11,23 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "concurrently \"npm run dev -w services/api-gateway\" \"npm run dev -w services/user-service\" \"npm run dev -w services/catalog-service\" \"npm run dev -w services/order-service\" \"npm run dev -w services/notification-service\""
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "microservices",
+    "distributed-systems",
+    "saga-pattern",
+    "node",
+    "react",
+    "postgresql",
+    "mongodb",
+    "rabbitmq",
+    "valkey"
+  ],
+  "author": "RajaiTarun",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RajaiTarun/MerchFlow"
+  },
   "type": "commonjs",
   "workspaces": [
     "services/*"

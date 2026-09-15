@@ -1,7 +1,7 @@
 {
   "name": "api-gateway",
   "version": "1.0.0",
-  "description": "",
+  "description": "Express API gateway — JWT auth, RBAC, per-route rate limiting, and request routing to the backend services.",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",

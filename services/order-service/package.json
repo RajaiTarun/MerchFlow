@@ -1,7 +1,7 @@
 {
   "name": "order-service",
   "version": "1.0.0",
-  "description": "",
+  "description": "Checkout orchestration — distributed locking, idempotency, and saga-based inventory compensation. Backed by PostgreSQL + Valkey.",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
