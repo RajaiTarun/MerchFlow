@@ -1,0 +1,174 @@
+# Render Blueprint — deploys the whole system on Render's free tier.
+#
+# All 6 services use `plan: free` (Private Services have no free tier, so we
+# don't use them here — see docs/system-design or ask Claude for the tradeoff
+# this implies: each service technically gets a public URL, but inter-service
+# calls are wired to each other's *internal* hostname via `fromService`, so
+# that traffic never leaves Render's private network. The existing
+# INTERNAL_SERVICE_KEY check in every service's `internalAuthMiddleware` is
+# the actual defense against someone hitting a backend service's public URL
+# directly — same protection as before, just enforced at the app layer
+# instead of the network layer.
+#
+# Ports are fixed to match what's already hardcoded in the code (api-gateway's
+# proxy targets, and each service's own PORT fallback default) — 3000-3004,
+# same as local dev and docker-compose.
+#
+# Secrets (sync: false) are NOT set here — fill them in once in the Render
+# Dashboard after the first deploy. Nothing sensitive is committed.
+
+services:
+  - type: web
+    name: api-gateway
+    runtime: docker
+    plan: free
+    dockerfilePath: ./services/api-gateway/Dockerfile
+    dockerContext: ./services/api-gateway
+    envVars:
+      - key: JWT_SECRET
+        sync: false
+      - key: INTERNAL_SERVICE_KEY
+        sync: false
+      - key: USER_SERVICE_HOST
+        fromService:
+          name: user-service
+          type: web
+          property: host
+      - key: CATALOG_SERVICE_HOST
+        fromService:
+          name: catalog-service
+          type: web
+          property: host
+      - key: ORDER_SERVICE_HOST
+        fromService:
+          name: order-service
+          type: web
+          property: host
+      - key: NOTIFICATION_SERVICE_HOST
+        fromService:
+          name: notification-service
+          type: web
+          property: host
+
+  - type: web
+    name: user-service
+    runtime: docker
+    plan: free
+    dockerfilePath: ./services/user-service/Dockerfile
+    dockerContext: ./services/user-service
+    envVars:
+      - key: PORT
+        value: 3001
+      - key: USER_SERVICE_PORT
+        value: 3001
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: INTERNAL_SERVICE_KEY
+        sync: false
+
+  - type: web
+    name: catalog-service
+    runtime: docker
+    plan: free
+    dockerfilePath: ./services/catalog-service/Dockerfile
+    dockerContext: ./services/catalog-service
+    envVars:
+      - key: PORT
+        value: 3002
+      - key: CATALOG_SERVICE_PORT
+        value: 3002
+      - key: DATABASE_URL
+        sync: false
+      - key: MONGODB_URI
+        sync: false
+      - key: VALKEY_URL
+        sync: false
+      - key: RABBITMQ_URL
+        sync: false
+      - key: INTERNAL_SERVICE_KEY
+        sync: false
+
+  - type: web
+    name: order-service
+    runtime: docker
+    plan: free
+    dockerfilePath: ./services/order-service/Dockerfile
+    dockerContext: ./services/order-service
+    envVars:
+      - key: PORT
+        value: 3003
+      - key: ORDER_SERVICE_PORT
+        value: 3003
+      - key: DATABASE_URL
+        sync: false
+      - key: VALKEY_URL
+        sync: false
+      - key: RABBITMQ_URL
+        sync: false
+      - key: INTERNAL_SERVICE_KEY
+        sync: false
+      - key: USER_SERVICE_HOST
+        fromService:
+          name: user-service
+          type: web
+          property: host
+      - key: USER_SERVICE_PORT
+        value: 3001
+      - key: CATALOG_SERVICE_HOST
+        fromService:
+          name: catalog-service
+          type: web
+          property: host
+      - key: CATALOG_SERVICE_PORT
+        value: 3002
+
+  - type: web
+    name: notification-service
+    runtime: docker
+    plan: free
+    dockerfilePath: ./services/notification-service/Dockerfile
+    dockerContext: ./services/notification-service
+    envVars:
+      - key: PORT
+        value: 3004
+      - key: NOTIFICATION_SERVICE_PORT
+        value: 3004
+      - key: DATABASE_URL
+        sync: false
+      - key: RABBITMQ_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: INTERNAL_SERVICE_KEY
+        sync: false
+      - key: ORDER_SERVICE_HOST
+        fromService:
+          name: order-service
+          type: web
+          property: host
+      - key: ORDER_SERVICE_PORT
+        value: 3003
+
+  # Static Site, not the nginx Dockerfile — free and never spins down (unlike
+  # the free Web Services above, which sleep after 15 idle minutes). Nothing
+  # to run for pure static output, so there's no reason to pay the cold-start
+  # cost here too.
+  - type: web
+    name: frontend
+    runtime: static
+    buildCommand: cd frontend && npm ci && npm run build
+    staticPublishPath: ./frontend/dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      # Baked in at build time (Vite can't read env vars at runtime) — the
+      # browser calls this directly, so it must be api-gateway's PUBLIC URL,
+      # not its internal hostname. Render assigns that URL once api-gateway
+      # is first created; fill it in here (Dashboard → frontend → Environment)
+      # and trigger a manual redeploy of just the frontend afterward.
+      - key: VITE_API_BASE_URL
+        sync: false
