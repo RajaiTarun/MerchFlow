@@ -343,7 +343,7 @@ We will implement the **Circuit Breaker Pattern** paired with an **Exponential B
 
 * **Tuning Complexity:** Requires careful configuration of failure percentages, timeout thresholds, and cooldown durations to prevent the breaker from tripping prematurely during temporary network blips.
 
-
+**Revision note (2026-09-14):** this decision is still the intended design and its status below is unchanged — but it was never actually implemented. There is no `opossum` dependency in any service's `package.json`, and `services/notification-service/index.js` has no circuit-breaker or retry logic at all; its own inline comment says as much (`// retrying is not in my scope as of now, if i have time will try something like retry mechanism`). The Strategy-pattern seam this would attach to (`NotificationStrategy`) is real and already built (see `docs/system-design/LLD/design-patterns/strategy-observer-pattern.md`), and there's currently exactly one strategy (`InAppNotificationStrategy`, all-internal, nothing external to trip a breaker on) — so this becomes directly relevant the moment a real third-party channel (email/SMS) is added, not before. Treat ADR-006 as "designed, not yet built," not as a completed part of the system.
 
 ---
 

@@ -111,6 +111,15 @@ To evaluate the success of the prototype from a systems engineering perspective,
 * **Cache Hit Ratio:** The Valkey caching layer must achieve a `> 85%` cache hit ratio for catalog feed browsing during peak traffic simulations.
 * **Notification Decoupling:** Order Service API response times must remain completely unaffected (zero latency degradation) by the speed or state of the Notification Service.
 
+**Revision note (2026-09-14):** cross-checking each KPI above against what has actually been measured (`learnings.md`) — none of the five has been verified against its literal numeric target via a real load test yet:
+
+* **Zero Overselling Guarantee:** the mechanism (Valkey distributed lock + atomic Mongo `findOneAndUpdate` check-and-decrement) is implemented and manually verified for the two-concurrent-request case (see the QA checklist's lock-contention-retry step), but the specific "500 requests for 50 units → exactly 50 committed, 0 oversold" load test described here has not been run.
+* **Lock Contention Latency (`< 15ms`)** and **Saga Rollback Reliability (`< 100ms`):** not benchmarked. The rollback *mechanism itself* is verified to work correctly (retried, idempotent — see `docs/system-design/LLD/saga-and-compensation/saga-rollback.md`), but no timing measurement has been taken for either figure.
+* **Cache Hit Ratio (`> 85%`):** not measured as a hit-ratio percentage under load. What *was* measured is a different, related number — cache-hit vs. cache-miss latency (≈207ms vs. ≈336ms, `learnings.md` #4) — which is useful but answers a different question than "what fraction of requests hit the cache." See `docs/system-design/LLD/caching/catalog-feed-cache.md` for the full measured story, including why the absolute numbers here are dominated by cross-cloud-region network latency rather than cache mechanics.
+* **Notification Decoupling:** true by construction (the RabbitMQ publish is fire-and-forget, never awaited by the checkout response — see `services/order-service/routes/orders.js`), and this one is fair to state with confidence even without a load test, since it follows directly from reading the code path rather than needing a timing measurement to confirm.
+
+Formal load testing (the "get metrics" work item) is understood to be planned, not skipped — this note exists so the KPIs above are read as *targets*, not as already-verified facts, until that testing happens.
+
 ---
 
 ## 5. Prototype Scope & System Boundaries (7–9 Day Sprint)

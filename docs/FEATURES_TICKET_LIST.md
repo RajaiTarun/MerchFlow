@@ -268,11 +268,15 @@
 * [ ] In `OPEN` state, subsequent dispatch attempts fail fast instantly without executing network requests, logging a circuit-breaking exception.
 * [ ] Circuit transitions to `HALF-OPEN` after a cooldown period to test upstream recovery.
 
+**Revision note (2026-09-14):** this ticket was never executed. No `opossum` dependency exists in any service, and the Notification Service's RabbitMQ consumer has no retry or circuit-breaker logic — see the matching revision note on ADR-006 in `docs/ADR.md` and `docs/system-design/LLD/design-patterns/strategy-observer-pattern.md` for the (already-built) Strategy seam this would attach to whenever a real external channel is added.
+
 
 
 ---
 
 ## 🖥️ Phase 6: Utilitarian React Dashboard & Telemetry (Days 7–8)
+
+**Revision note (2026-09-14):** the frontend that actually shipped (12 pages under `frontend/src/pages/`, plain Tailwind, no component library) took a simpler path than the "Diagnostic Control Panel" / "Architectural Telemetry Drawer" vision these tickets describe below — there is no live lock/latency telemetry drawer, no per-request cache-hit millisecond footer, and no colored educational toast badges for Saga rollback / rate-limit / lock-contention states. What *is* implemented and real: the size-fallback flow, the checkout state machine's retry behavior on `409`/`429` with `Retry-After`, and plain-text success/error messaging for every one of these backend states — just presented as ordinary UI copy instead of the specific "telemetry drawer" / badge language these tickets specify. Read the tickets below as the original UI ambition, not as a description of the shipped frontend.
 
 ### Ticket `UI-601`: Vite/React Bootstrap, Stateless Storage & Axios Interceptors
 

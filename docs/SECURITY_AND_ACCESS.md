@@ -94,6 +94,8 @@ To prevent scraping bots or checkout spam during a limited-edition hoodie drop, 
 * **Order Checkout (`POST`):** Max **5 checkout attempts / min** per JWT.
 * Exceeding these limits triggers an immediate HTTP `429 Too Many Requests` response.
 
+**Revision note (2026-09-14):** the limiter's mechanism (atomic Lua script, per-route-per-IP keying, self-healing TTL — see `docs/system-design/LLD/rate-limiting/token-bucket-limiter.md`) is implemented and verified. The specific thresholds above are the originally *intended* values (also left as inline comments — `// 100`, `// 5` — next to the code that superseded them), but the constants actually configured right now in `services/api-gateway/middleware/rateLimiter.js` are **1000 requests/min for both routes**, not 100 and 5. `learnings.md` #9's own concurrency verification explicitly tested against "a fresh bucket (limit 1000)," confirming this is the value in effect during development, not a stray leftover — most plausibly loosened to avoid tripping the limiter while iterating, though that specific motive isn't confirmed anywhere in the codebase itself. Tightening the two constants back to 100/5 before any real demo or deployment is a one-line change per route, not a mechanism change.
+
 ### 3.2 Double-Charge Protection (Idempotency)
 
 To prevent network lag or accidental double-clicks from charging a student twice:

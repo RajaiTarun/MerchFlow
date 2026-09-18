@@ -23,6 +23,8 @@ The frontend will act as a lightweight, high-performance web dashboard. It will 
 To turn this frontend into a portfolio showpiece for backend interviews, the UI will feature a collapsible **"Architectural Telemetry Drawer."**
 When enabled, this UI component will display a live stream of what is happening under the hood during user actions: showing API Gateway routing hops, Valkey lock acquisitions, HTTP status codes, and asynchronous RabbitMQ event deliveries in real time.
 
+**Revision note (2026-09-14):** the Telemetry Drawer was not built, and none of §4's per-view "telemetry badge" language below (cache-hit millisecond footers, colored Saga/lock-contention/rate-limit toast badges) shipped either — the actual frontend (`frontend/src/pages/`) surfaces these same backend states as plain success/error text, not as a dedicated diagnostics UI. The route structure in §3 is also more granular in the shipped app than described below: `/dashboard` became three separate pages (`/profile`, `/orders`, `/notifications`), and `/admin/club` and `/superadmin/root` became five separate `/admin/*` pages, each protected per-role by `ProtectedRoute` rather than one combined admin view per tier. This file otherwise still accurately describes the checkout flow, size-fallback behavior, and retry/backoff contract, which did ship as specified.
+
 ---
 
 ## 2. Technical Stack & Client Architecture
