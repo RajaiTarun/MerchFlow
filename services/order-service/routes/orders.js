@@ -10,6 +10,12 @@ const IDEMPOTENCY_TTL = 86400;
 const LOCK_TTL_MS = 15000;
 const LOCK_PREFIX = 'lock:item:';
 
+// Default to 'localhost' so `npm run dev` (plain local processes) keeps
+// working unchanged. Docker Compose overrides these to the container/service
+// names, since 'localhost' inside a container is that container, not a sibling.
+const USER_SERVICE_HOST = process.env.USER_SERVICE_HOST || 'localhost';
+const CATALOG_SERVICE_HOST = process.env.CATALOG_SERVICE_HOST || 'localhost';
+
 const LUA_RELEASE_LOCK = `
 if redis.call("GET", KEYS[1]) == ARGV[1] then
 return redis.call("DEL", KEYS[1])
@@ -233,7 +239,7 @@ module.exports = (pool, redis) => {
         }
 
         try {
-            const userResponse = await axios.get(`http://localhost:${process.env.USER_SERVICE_PORT || 3001}/profile/${userId}`, {
+            const userResponse = await axios.get(`http://${USER_SERVICE_HOST}:${process.env.USER_SERVICE_PORT || 3001}/profile/${userId}`, {
                 headers: internalHeaders
             });
 
@@ -246,7 +252,7 @@ module.exports = (pool, redis) => {
             // }
 
             // now lets check the available sizes
-            const catalogResponse = await axios.get(`http://localhost:${process.env.CATALOG_SERVICE_PORT || 3002}/${catalogItemId}`, {
+            const catalogResponse = await axios.get(`http://${CATALOG_SERVICE_HOST}:${process.env.CATALOG_SERVICE_PORT || 3002}/${catalogItemId}`, {
                 headers: internalHeaders
             });
 
@@ -328,7 +334,7 @@ module.exports = (pool, redis) => {
 
             // so now let's decrement the stock
             const stockResponse = await axios.patch(
-                `http://localhost:${process.env.CATALOG_SERVICE_PORT || 3002}/${catalogItemId}/stock`,
+                `http://${CATALOG_SERVICE_HOST}:${process.env.CATALOG_SERVICE_PORT || 3002}/${catalogItemId}/stock`,
                 { quantity, reservationId: idempotencyKey }, {
                 headers: internalHeaders
             }
@@ -375,7 +381,7 @@ INSERT INTO orders(user_id, catalog_item_id, club_id, selected_size, quantity, s
 
             // ── AC1: Commit Reservation in Catalog ──
             await axios.patch(
-                `http://localhost:${process.env.CATALOG_SERVICE_PORT || 3002}/${catalogItemId}/reservation/commit`,
+                `http://${CATALOG_SERVICE_HOST}:${process.env.CATALOG_SERVICE_PORT || 3002}/${catalogItemId}/reservation/commit`,
                 { reservationId: idempotencyKey },
                 { headers: internalHeaders }
             );
@@ -687,7 +693,7 @@ INSERT INTO orders(user_id, catalog_item_id, club_id, selected_size, quantity, s
             let itemName = updatedOrder.catalog_item_id;
             try {
                 const itemResponse = await axios.get(
-                    `http://localhost:${process.env.CATALOG_SERVICE_PORT || 3002}/${updatedOrder.catalog_item_id}`,
+                    `http://${CATALOG_SERVICE_HOST}:${process.env.CATALOG_SERVICE_PORT || 3002}/${updatedOrder.catalog_item_id}`,
                     { headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY } }
                 );
                 itemName = itemResponse.data.item.name;

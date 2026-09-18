@@ -1,0 +1,59 @@
+# Minimal deployment setup — 5 backend services + frontend, all talking to the
+# same managed cloud databases this project already uses (Postgres/Mongo/Valkey/
+# RabbitMQ), so there are no database containers here. Only api-gateway and
+# frontend publish a port; the other 4 services are reachable from each other
+# on the default compose network by service name, but not from the host —
+# matching the "only the gateway is public" design in docs/SECURITY_AND_ACCESS.md.
+
+services:
+  api-gateway:
+    build: ./services/api-gateway
+    ports:
+      - "3000:3000"
+    env_file: .env
+    environment:
+      USER_SERVICE_HOST: user-service
+      CATALOG_SERVICE_HOST: catalog-service
+      ORDER_SERVICE_HOST: order-service
+      NOTIFICATION_SERVICE_HOST: notification-service
+    depends_on:
+      - user-service
+      - catalog-service
+      - order-service
+      - notification-service
+
+  user-service:
+    build: ./services/user-service
+    env_file: .env
+
+  catalog-service:
+    build: ./services/catalog-service
+    env_file: .env
+
+  order-service:
+    build: ./services/order-service
+    env_file: .env
+    environment:
+      USER_SERVICE_HOST: user-service
+      CATALOG_SERVICE_HOST: catalog-service
+    depends_on:
+      - user-service
+      - catalog-service
+
+  notification-service:
+    build: ./services/notification-service
+    env_file: .env
+    environment:
+      ORDER_SERVICE_HOST: order-service
+    depends_on:
+      - order-service
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: http://localhost:3000/api/v1
+    ports:
+      - "5173:80"
+    depends_on:
+      - api-gateway

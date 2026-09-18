@@ -3,6 +3,10 @@ const axios = require('axios');
 const sleep = (ms) =>
     new Promise(resolve => setTimeout(resolve, ms));
 
+// Default to 'localhost' for plain local `npm run dev`; Docker Compose
+// overrides this to the catalog-service container name.
+const CATALOG_SERVICE_HOST = process.env.CATALOG_SERVICE_HOST || 'localhost';
+
 async function compensateInventory({
     catalogItemId,
     reservationId,
@@ -17,7 +21,7 @@ async function compensateInventory({
             );
 
             const response = await axios.patch(
-                `http://localhost:${process.env.CATALOG_SERVICE_PORT || 3002}/${catalogItemId}/rollback`,
+                `http://${CATALOG_SERVICE_HOST}:${process.env.CATALOG_SERVICE_PORT || 3002}/${catalogItemId}/rollback`,
                 {
                     reservationId
                 },

@@ -3,7 +3,6 @@ const amqp = require('amqplib'); // this is basically rabbitmq's node driver/ cl
 const axios = require('axios');
 const { Pool } = require('pg');
 require('dotenv').config({ path: '../../.env' });
-
 const NotificationBroadcaster = require('./observers/NotificationBroadcaster');
 const InAppNotificationStrategy = require('./strategies/InAppNotificationStrategy');
 const notificationRoutes = require('./routes/notifications');
@@ -32,7 +31,10 @@ const QUEUE_NAME = 'notification_queue';
 // becoming a second RabbitMQ consumer/publisher.
 const ROUTING_KEYS = ['order.placed', 'delivery.slot.updated', 'order.delivered'];
 
-const ORDER_SERVICE_URL = `http://localhost:${process.env.ORDER_SERVICE_PORT || 3003}`;
+// Default to 'localhost' for plain local `npm run dev`; Docker Compose
+// overrides this to the order-service container name.
+const ORDER_SERVICE_HOST = process.env.ORDER_SERVICE_HOST || 'localhost';
+const ORDER_SERVICE_URL = `http://${ORDER_SERVICE_HOST}:${process.env.ORDER_SERVICE_PORT || 3003}`;
 
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
@@ -205,7 +207,7 @@ const connectRabbitMQ = async () => {
                 } catch (err) {
                     console.error(
                         '[NOTIFICATION SERVICE] Failed to process message:',
-                        err.message
+                        err
                     );
 
                     // retrying is not in my scope as of now, if i have time will try something like retry mechanism

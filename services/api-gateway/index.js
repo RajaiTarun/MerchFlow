@@ -11,10 +11,18 @@ const { catalogRateLimiter, ordersRateLimiter } = require('./middleware/rateLimi
 const authMiddleware = require('./middleware/authMiddleware');
 const { requireRoles, injectClubId } = require('./middleware/rbacMiddleware');
 
+// Service hostnames — default to 'localhost' so `npm run dev` (all services as
+// plain local processes) keeps working unchanged. Docker Compose overrides
+// these to the container/service names (e.g. USER_SERVICE_HOST=user-service),
+// since 'localhost' inside a container means that container, never a sibling.
+const USER_SERVICE_HOST = process.env.USER_SERVICE_HOST || 'localhost';
+const CATALOG_SERVICE_HOST = process.env.CATALOG_SERVICE_HOST || 'localhost';
+const ORDER_SERVICE_HOST = process.env.ORDER_SERVICE_HOST || 'localhost';
+const NOTIFICATION_SERVICE_HOST = process.env.NOTIFICATION_SERVICE_HOST || 'localhost';
 
 // creating proxy middleware, basically routes the requests to their respective microservice
 const userProxy = createProxyMiddleware({
-    target: 'http://localhost:3001',
+    target: `http://${USER_SERVICE_HOST}:3001`,
     changeOrigin: true,
     on: {
         proxyReq: (proxyReq) => {
@@ -24,7 +32,7 @@ const userProxy = createProxyMiddleware({
 });
 
 const clubsProxy = createProxyMiddleware({
-    target: 'http://localhost:3001',
+    target: `http://${USER_SERVICE_HOST}:3001`,
     changeOrigin: true,
     on: {
         proxyReq: (proxyReq) => {
@@ -34,7 +42,7 @@ const clubsProxy = createProxyMiddleware({
 });
 
 const catalogProxy = createProxyMiddleware({
-    target: 'http://localhost:3002',
+    target: `http://${CATALOG_SERVICE_HOST}:3002`,
     changeOrigin: true,
     on: {
         proxyReq: (proxyReq) => {
@@ -44,7 +52,7 @@ const catalogProxy = createProxyMiddleware({
 });
 
 const ordersProxy = createProxyMiddleware({
-    target: 'http://localhost:3003',
+    target: `http://${ORDER_SERVICE_HOST}:3003`,
     changeOrigin: true,
     on: {
         proxyReq: (proxyReq) => {
@@ -54,7 +62,7 @@ const ordersProxy = createProxyMiddleware({
 });
 
 const notificationsProxy = createProxyMiddleware({
-    target: 'http://localhost:3004',
+    target: `http://${NOTIFICATION_SERVICE_HOST}:3004`,
     changeOrigin: true,
     on: {
         proxyReq: (proxyReq) => {
@@ -68,7 +76,7 @@ const notificationsProxy = createProxyMiddleware({
 // '/api/v1/users' from req.url the way it does for the userProxy mount below —
 // pathRewrite does that stripping here instead, so user-service still sees /:userId/role.
 const userRoleProxy = createProxyMiddleware({
-    target: 'http://localhost:3001',
+    target: `http://${USER_SERVICE_HOST}:3001`,
     changeOrigin: true,
     pathRewrite: { '^/api/v1/users': '' },
     on: {
@@ -82,7 +90,7 @@ const userRoleProxy = createProxyMiddleware({
 // so user-service sees /lookup instead of /api/v1/users/lookup. Used for the
 // SUPER_ADMIN email-based user lookup that backs the role-promotion form.
 const userLookupProxy = createProxyMiddleware({
-    target: 'http://localhost:3001',
+    target: `http://${USER_SERVICE_HOST}:3001`,
     changeOrigin: true,
     pathRewrite: { '^/api/v1/users': '' },
     on: {

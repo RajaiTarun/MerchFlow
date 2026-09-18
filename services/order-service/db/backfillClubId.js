@@ -8,7 +8,8 @@ const pool = new Pool({
     ssl: { rejectUnauthorized: false }
 });
 
-const CATALOG_SERVICE_URL = `http://localhost:${process.env.CATALOG_SERVICE_PORT || 3002}`;
+const CATALOG_SERVICE_HOST = process.env.CATALOG_SERVICE_HOST || 'localhost';
+const CATALOG_SERVICE_URL = `http://${CATALOG_SERVICE_HOST}:${process.env.CATALOG_SERVICE_PORT || 3002}`;
 
 // One-time script: orders placed before migrate6.js added club_id have none.
 // This looks up each distinct catalog_item_id's clubId in catalog-service and

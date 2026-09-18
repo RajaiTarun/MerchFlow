@@ -8,7 +8,8 @@ const pool = new Pool({
     ssl: { rejectUnauthorized: false }
 });
 
-const USER_SERVICE_URL = `http://localhost:${process.env.USER_SERVICE_PORT || 3001}`;
+const USER_SERVICE_HOST = process.env.USER_SERVICE_HOST || 'localhost';
+const USER_SERVICE_URL = `http://${USER_SERVICE_HOST}:${process.env.USER_SERVICE_PORT || 3001}`;
 
 // One-time script: orders placed before migrate7.js added student_email have
 // none. This looks up each distinct user_id's email in user-service and
