@@ -31,10 +31,10 @@ const QUEUE_NAME = 'notification_queue';
 // becoming a second RabbitMQ consumer/publisher.
 const ROUTING_KEYS = ['order.placed', 'delivery.slot.updated', 'order.delivered'];
 
-// Default to 'localhost' for plain local `npm run dev`; Docker Compose
-// overrides this to the order-service container name.
-const ORDER_SERVICE_HOST = process.env.ORDER_SERVICE_HOST || 'localhost';
-const ORDER_SERVICE_URL = `http://${ORDER_SERVICE_HOST}:${process.env.ORDER_SERVICE_PORT || 3003}`;
+// Default to plain local process for `npm run dev`; Docker Compose overrides
+// this to http://order-service:3003; Render overrides it to order-service's
+// public URL (see the note in api-gateway/index.js on why).
+const ORDER_SERVICE_URL = process.env.ORDER_SERVICE_URL || 'http://localhost:3003';
 
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,

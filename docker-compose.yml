@@ -12,10 +12,10 @@ services:
       - "3000:3000"
     env_file: .env
     environment:
-      USER_SERVICE_HOST: user-service
-      CATALOG_SERVICE_HOST: catalog-service
-      ORDER_SERVICE_HOST: order-service
-      NOTIFICATION_SERVICE_HOST: notification-service
+      USER_SERVICE_URL: http://user-service:3001
+      CATALOG_SERVICE_URL: http://catalog-service:3002
+      ORDER_SERVICE_URL: http://order-service:3003
+      NOTIFICATION_SERVICE_URL: http://notification-service:3004
     depends_on:
       - user-service
       - catalog-service
@@ -34,8 +34,8 @@ services:
     build: ./services/order-service
     env_file: .env
     environment:
-      USER_SERVICE_HOST: user-service
-      CATALOG_SERVICE_HOST: catalog-service
+      USER_SERVICE_URL: http://user-service:3001
+      CATALOG_SERVICE_URL: http://catalog-service:3002
     depends_on:
       - user-service
       - catalog-service
@@ -44,7 +44,7 @@ services:
     build: ./services/notification-service
     env_file: .env
     environment:
-      ORDER_SERVICE_HOST: order-service
+      ORDER_SERVICE_URL: http://order-service:3003
     depends_on:
       - order-service
 

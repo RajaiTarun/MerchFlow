@@ -8,8 +8,7 @@ const pool = new Pool({
     ssl: { rejectUnauthorized: false }
 });
 
-const CATALOG_SERVICE_HOST = process.env.CATALOG_SERVICE_HOST || 'localhost';
-const CATALOG_SERVICE_URL = `http://${CATALOG_SERVICE_HOST}:${process.env.CATALOG_SERVICE_PORT || 3002}`;
+const CATALOG_SERVICE_URL = process.env.CATALOG_SERVICE_URL || 'http://localhost:3002';
 
 // One-time script: orders placed before migrate8.js added item_name have
 // none. This looks up each distinct catalog_item_id's name in catalog-service
