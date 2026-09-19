@@ -10,15 +10,19 @@
 [![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=for-the-badge&logo=mongodb&logoColor=white)](services/catalog-service/)
 [![RabbitMQ](https://img.shields.io/badge/RabbitMQ-FF6600?style=for-the-badge&logo=rabbitmq&logoColor=white)](services/notification-service/)
 [![Valkey](https://img.shields.io/badge/Valkey-DC382D?style=for-the-badge&logo=redis&logoColor=white)](services/catalog-service/cache/valkey.js)
+[![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)](docker-compose.yml)
+[![Render](https://img.shields.io/badge/Render-46E3B7?style=for-the-badge&logo=render&logoColor=white)](render.yaml)
 
 `5 services` · `2 databases` · `1 message broker` · `4 design patterns` · `0 oversells`
+
+**Live**: [frontend-6jke.onrender.com](https://frontend-6jke.onrender.com) — free-tier services sleep after 15 idle minutes, so the first load can take ~30–60s to wake up. Not broken, just cheap.
 
 </div>
 
 ---
 
 ### Contents
-[The problem](#the-problem) · [What's actually being tested](#whats-actually-being-tested-here) · [Architecture](#architecture-in-words) · [Frontend](#frontend) · [Running it locally](#running-it-locally) · [What's deliberately not here](#whats-deliberately-not-here) · [Repo layout](#repo-layout)
+[The problem](#the-problem) · [What's actually being tested](#whats-actually-being-tested-here) · [Architecture](#architecture-in-words) · [Frontend](#frontend) · [Running it locally](#running-it-locally) · [Deployed on Render](#-deployed-on-render) · [What's deliberately not here](#whats-deliberately-not-here) · [Repo layout](#repo-layout)
 
 ---
 
@@ -51,7 +55,7 @@ Design patterns aren't sprinkled in for the sake of a resume line — each one i
 
 Five independent Node/Express services sit behind an API gateway that owns JWT verification, RBAC, per-route rate limiting, and header-injected trust boundaries (a service never trusts a client-supplied `userId` or `clubId` — those come from the verified token, injected as headers downstream can trust).
 
-> HLD/LLD diagrams are still being drawn up properly — dropping them in here once they're done instead of a rushed Mermaid box.
+> Full HLD/LLD breakdown — sequence diagrams, design-pattern rationale, rejected alternatives — lives in [`docs/system-design/`](docs/system-design/). The rest of `docs/` (PRD, ADRs, security spec) is older planning material, still being brought up to date.
 
 | Service | Owns | Store |
 |---|---|---|
@@ -71,16 +75,21 @@ A small React 19 + React Router SPA (Tailwind v4, no component library) — 12 p
 
 ## ⚙️ Running it locally
 
-There's no Docker Compose yet (that's a planned Phase 2, not done) — everything runs as plain Node processes talking to managed cloud databases, which is genuinely easier for local dev than standing up 4 datastores yourself.
+Two ways to run it — same managed cloud databases either way (Postgres/Mongo/Valkey/RabbitMQ), so there's nothing local to stand up regardless of which you pick.
 
+**Plain Node processes** — fastest inner loop while actively changing code:
 ```bash
-# root — installs and runs all 5 backend services via workspaces
 npm install
-npm run dev
+npm run dev                                    # all 5 backend services, via workspaces
 
-# separately — the frontend
-cd frontend && npm install && npm run dev
+cd frontend && npm install && npm run dev      # separately
 ```
+
+**Docker Compose** — closer to how it's actually deployed:
+```bash
+docker compose up --build
+```
+Builds and runs all 6 services (5 backend + the frontend behind nginx) from their own `Dockerfile`s. The only thing that changes between the two modes is how each service finds the others: `http://localhost:3001` locally vs. `http://user-service:3001` (Docker's internal DNS) in Compose — same code path either way, picked up from an env var with `localhost` as the default. That same indirection is also what makes the Render deployment below possible without a second code change.
 
 <details>
 <summary><strong>Required environment variables</strong> (repo-root <code>.env</code>)</summary>
@@ -96,11 +105,17 @@ PORT=                    # gateway (3000)
 USER_SERVICE_PORT / CATALOG_SERVICE_PORT / ORDER_SERVICE_PORT / NOTIFICATION_SERVICE_PORT
 ```
 
-Gateway on `:3000`, frontend on `:5173`, backend services on `:3001`–`:3004`. Each service has its own `db/setup.js` / `migrate*.js` to run once against a fresh database.
+Gateway on `:3000`, frontend on `:5173`, backend services on `:3001`–`:3004`. Each service has its own `db/setup.js` / `migrate*.js` to run once against a fresh database. Docker Compose reads this same file via `env_file: .env`.
 
 </details>
 
 To poke at the interesting part directly: place an order with mock card `4242` (succeeds) or `4000` (fails and rolls back inventory) — no real payment gateway, this is a controlled way to force both branches of the saga on demand.
+
+## 🚀 Deployed on Render
+
+All 6 services deploy from one [`render.yaml`](render.yaml) blueprint — the 5 backend services built straight from their existing `Dockerfile`s, the frontend as a Static Site rather than another container (nothing to run for pure static output, and unlike a free web service it never sleeps).
+
+The one real discovery from actually deploying this, worth knowing before you copy this setup: **Render's free tier lets a service *send* private-network requests but not *receive* them.** The "gateway public, everything else network-isolated" design in [`SECURITY_AND_ACCESS.md`](docs/SECURITY_AND_ACCESS.md) can't be built with genuine network isolation on the free tier at all — Private Services (the type with no public URL) have no free instance type, and even a free *public* Web Service can't accept inbound traffic from another service's private-network call. So every backend service here does have a public URL, whether it's meant to or not, and inter-service calls go over it — plain HTTPS, same as any two unrelated services talking over the internet. What actually stops someone from hitting `catalog-service`'s public URL directly is the same `X-Internal-Service-Key` check every service already enforces in its `internalAuthMiddleware` — that check never cared which network a request arrived over. So the real security model didn't change; only the "traffic never leaves Render's backbone" nicety got traded away, and that part costs money.
 
 ## 🚫 What's deliberately not here
 
@@ -115,13 +130,17 @@ None of these are gaps I didn't notice — they're in [`learnings.md`](learnings
 
 ```
 services/
-  api-gateway/           auth, RBAC, rate limiting, routing
-  user-service/          auth, profiles, roles, clubs        → PostgreSQL
-  catalog-service/       items, stock, feed cache             → MongoDB + Valkey
-  order-service/         checkout, locking, saga              → PostgreSQL + Valkey
-  notification-service/  event consumption, dispatch          → PostgreSQL
-frontend/                React 19 + Tailwind SPA
-docs/                    PRD, ADRs, security spec
+  api-gateway/           auth, RBAC, rate limiting, routing        (+ Dockerfile)
+  user-service/          auth, profiles, roles, clubs        → PostgreSQL   (+ Dockerfile)
+  catalog-service/       items, stock, feed cache             → MongoDB + Valkey  (+ Dockerfile)
+  order-service/         checkout, locking, saga              → PostgreSQL + Valkey  (+ Dockerfile)
+  notification-service/  event consumption, dispatch          → PostgreSQL   (+ Dockerfile)
+frontend/                React 19 + Tailwind SPA                  (+ Dockerfile, nginx.conf)
+docs/
+  system-design/         HLD/LLD diagrams + design-pattern rationale (current, interview-ready)
+  *.md                   PRD, ADRs, security spec (older planning docs, being updated)
+docker-compose.yml       local multi-service run, mirrors the Render topology
+render.yaml              Render Blueprint — deploys all 6 services on the free plan
 ```
 
 ---
