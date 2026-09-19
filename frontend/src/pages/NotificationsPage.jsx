@@ -10,8 +10,8 @@ function NotificationsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
-  function fetchNotifications() {
-    apiFetch('/notifications', { token })
+  function fetchNotifications({ isPoll = false } = {}) {
+    apiFetch('/notifications', { token, retryOnIdle: !isPoll })
       .then((data) => setNotifications(data.notifications))
       .catch((err) => setError(err.body?.error || err.message))
       .finally(() => setLoading(false))
@@ -25,7 +25,10 @@ function NotificationsPage() {
   // this is the simplest honest way to notice new notifications while this
   // page is open.
   useEffect(() => {
-    const intervalId = setInterval(fetchNotifications, NOTIFICATION_POLL_INTERVAL_MS)
+    const intervalId = setInterval(
+      () => fetchNotifications({ isPoll: true }),
+      NOTIFICATION_POLL_INTERVAL_MS,
+    )
     return () => clearInterval(intervalId)
   }, [token])
 

@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import Navbar from './Navbar.jsx'
+import WakingBanner from './WakingBanner.jsx'
 import ProtectedRoute from './ProtectedRoute.jsx'
 import LoginPage from './pages/LoginPage.jsx'
 import RegisterPage from './pages/RegisterPage.jsx'
@@ -20,6 +21,7 @@ function App() {
   return (
     <>
       <Navbar />
+      <WakingBanner />
       <main className="max-w-3xl mx-auto p-4">
         <Routes>
           <Route path="/" element={<Navigate to="/catalog" />} />

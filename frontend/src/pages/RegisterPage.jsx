@@ -9,6 +9,7 @@ function RegisterPage() {
   const [password, setPassword] = useState('')
   const [fullName, setFullName] = useState('')
   const [error, setError] = useState(null)
+  const [submitting, setSubmitting] = useState(false)
   const [success, setSuccess] = useState(false)
 
   // Purely a nicer UX touch - the backend's 403 is the real authority.
@@ -17,6 +18,7 @@ function RegisterPage() {
   async function handleSubmit(e) {
     e.preventDefault()
     setError(null)
+    setSubmitting(true)
 
     try {
       await apiFetch('/users/register', {
@@ -26,6 +28,8 @@ function RegisterPage() {
       setSuccess(true)
     } catch (err) {
       setError(err.body?.error || err.message)
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -90,9 +94,10 @@ function RegisterPage() {
         {error && <p className="text-red-600 text-sm">{error}</p>}
         <button
           type="submit"
-          className="bg-blue-600 text-white rounded px-4 py-2 hover:bg-blue-700"
+          disabled={submitting}
+          className="bg-blue-600 text-white rounded px-4 py-2 hover:bg-blue-700 disabled:opacity-60"
         >
-          Register
+          {submitting ? 'Registering...' : 'Register'}
         </button>
       </form>
       <p className="mt-4 text-sm">

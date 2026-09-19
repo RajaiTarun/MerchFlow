@@ -56,7 +56,7 @@ function ItemDetailPage() {
   // display refresh: the backend's atomic stock check at checkout time is
   // what actually prevents overselling, regardless of what's shown here.
   function refreshStock() {
-    apiFetch(`/catalog/${id}`, { token })
+    apiFetch(`/catalog/${id}`, { token, retryOnIdle: false })
       .then((data) => setItem(data.item))
       .catch(() => {}) // a failed background refresh isn't worth surfacing an error for
   }

@@ -7,12 +7,14 @@ function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState(null)
+  const [submitting, setSubmitting] = useState(false)
   const auth = useAuth()
   const navigate = useNavigate()
 
   async function handleSubmit(e) {
     e.preventDefault()
     setError(null)
+    setSubmitting(true)
 
     try {
       const data = await apiFetch('/users/login', {
@@ -23,6 +25,8 @@ function LoginPage() {
       navigate('/catalog')
     } catch (err) {
       setError(err.body?.error || err.message)
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -59,9 +63,10 @@ function LoginPage() {
         {error && <p className="text-red-600 text-sm">{error}</p>}
         <button
           type="submit"
-          className="bg-blue-600 text-white rounded px-4 py-2 hover:bg-blue-700"
+          disabled={submitting}
+          className="bg-blue-600 text-white rounded px-4 py-2 hover:bg-blue-700 disabled:opacity-60"
         >
-          Login
+          {submitting ? 'Logging in...' : 'Login'}
         </button>
       </form>
       <p className="mt-4 text-sm">
