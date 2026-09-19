@@ -24,6 +24,19 @@ const CATALOG_SERVICE_URL = process.env.CATALOG_SERVICE_URL || 'http://localhost
 const ORDER_SERVICE_URL = process.env.ORDER_SERVICE_URL || 'http://localhost:3003';
 const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || 'http://localhost:3004';
 
+// Without this, http-proxy-middleware silently answers with a bare 502/504 on
+// any connection failure — no indication anywhere of which target, or why.
+// That made a real production failure impossible to diagnose from logs alone.
+const logProxyError = (serviceName, target) => (err, req, res) => {
+    console.error(
+        `[API GATEWAY] Proxy error reaching ${serviceName} (${target}):`,
+        err.code || err.message || err
+    );
+    if (res && !res.headersSent) {
+        res.status(502).json({ error: `Upstream ${serviceName} unreachable` });
+    }
+};
+
 // creating proxy middleware, basically routes the requests to their respective microservice
 const userProxy = createProxyMiddleware({
     target: USER_SERVICE_URL,
@@ -31,7 +44,8 @@ const userProxy = createProxyMiddleware({
     on: {
         proxyReq: (proxyReq) => {
             proxyReq.setHeader('X-Internal-Service-Key', process.env.INTERNAL_SERVICE_KEY);
-        }
+        },
+        error: logProxyError('user-service', USER_SERVICE_URL)
     }
 });
 
@@ -41,7 +55,8 @@ const clubsProxy = createProxyMiddleware({
     on: {
         proxyReq: (proxyReq) => {
             proxyReq.setHeader('X-Internal-Service-Key', process.env.INTERNAL_SERVICE_KEY);
-        }
+        },
+        error: logProxyError('user-service', USER_SERVICE_URL)
     }
 });
 
@@ -51,7 +66,8 @@ const catalogProxy = createProxyMiddleware({
     on: {
         proxyReq: (proxyReq) => {
             proxyReq.setHeader('X-Internal-Service-Key', process.env.INTERNAL_SERVICE_KEY);
-        }
+        },
+        error: logProxyError('catalog-service', CATALOG_SERVICE_URL)
     }
 });
 
@@ -61,7 +77,8 @@ const ordersProxy = createProxyMiddleware({
     on: {
         proxyReq: (proxyReq) => {
             proxyReq.setHeader('X-Internal-Service-Key', process.env.INTERNAL_SERVICE_KEY);
-        }
+        },
+        error: logProxyError('order-service', ORDER_SERVICE_URL)
     }
 });
 
@@ -71,7 +88,8 @@ const notificationsProxy = createProxyMiddleware({
     on: {
         proxyReq: (proxyReq) => {
             proxyReq.setHeader('X-Internal-Service-Key', process.env.INTERNAL_SERVICE_KEY);
-        }
+        },
+        error: logProxyError('notification-service', NOTIFICATION_SERVICE_URL)
     }
 });
 
@@ -86,7 +104,8 @@ const userRoleProxy = createProxyMiddleware({
     on: {
         proxyReq: (proxyReq) => {
             proxyReq.setHeader('X-Internal-Service-Key', process.env.INTERNAL_SERVICE_KEY);
-        }
+        },
+        error: logProxyError('user-service', USER_SERVICE_URL)
     }
 });
 
@@ -100,7 +119,8 @@ const userLookupProxy = createProxyMiddleware({
     on: {
         proxyReq: (proxyReq) => {
             proxyReq.setHeader('X-Internal-Service-Key', process.env.INTERNAL_SERVICE_KEY);
-        }
+        },
+        error: logProxyError('user-service', USER_SERVICE_URL)
     }
 });
 
