@@ -260,6 +260,23 @@ app.get('/health', (req, res) => {
     });
 });
 
+// Wakes the free-tier Render services that sleep after 15 idle minutes. The
+// frontend (a static site that never sleeps) calls this on page load, so the
+// gateway and every backend boot in parallel while the user is still typing,
+// instead of one after another on the first real request. Each ping is
+// fire-and-forget: we answer immediately and never wait for the wake-up.
+// Any response (even a 404) wakes a service, so failures are ignored.
+app.get('/api/v1/warmup', (req, res) => {
+    const targets = [USER_SERVICE_URL, CATALOG_SERVICE_URL, ORDER_SERVICE_URL, NOTIFICATION_SERVICE_URL];
+    targets.forEach((url) => {
+        fetch(`${url}/health`, {
+            headers: { 'X-Internal-Service-Key': process.env.INTERNAL_SERVICE_KEY },
+            signal: AbortSignal.timeout(120000)
+        }).catch(() => {});
+    });
+    res.status(202).json({ status: 'warming' });
+});
+
 
 // making the server listen on PORT : 3000
 app.listen(PORT, () => {

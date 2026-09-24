@@ -4,6 +4,9 @@ import { BrowserRouter } from 'react-router-dom'
 import { AuthProvider } from './AuthContext.jsx'
 import './index.css'
 import App from './App.jsx'
+import { warmUpBackend } from './api.js'
+
+warmUpBackend()
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

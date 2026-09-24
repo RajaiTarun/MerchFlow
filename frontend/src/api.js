@@ -111,3 +111,10 @@ export async function apiFetch(
     return data
   }
 }
+
+// Fire-and-forget ping on page load so the sleeping Render gateway (and,
+// through it, every backend) starts waking while the user is still typing.
+// Deliberately bypasses apiFetch: no retries and no "waking up" banner.
+export function warmUpBackend() {
+  fetch(BASE_URL + '/warmup').catch(() => {})
+}
