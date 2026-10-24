@@ -13,7 +13,6 @@
   - private-network isolation of backend services and databases
   - NoSQL sanitization middleware (`express-mongo-sanitize` was removed, see `learnings.md` #2)
   - idempotency and registration checks "at the gateway" (they live in the Order and User services)
-  - the 100 and 5 requests/minute limits (not what is configured)
   - the earlier diagnostics-panel history
 - **Added:**
   - how identity reaches downstream services
@@ -114,19 +113,32 @@ There are three roles: `STUDENT`, `CLUB_ADMIN` and `SUPER_ADMIN`. Club scoping i
 │  ├── 1. JWT verification (protected routes)              │
 │  ├── 2. Role checks (scoped to specific routes)          │
 │  ├── 3. Rate limiting (Valkey, catalog + orders routes)  │
-│  └── 4. Identity headers + internal service key added    │
+│  ├── 4. Route allow-list (only intended paths forwarded) │
+│  └── 5. Identity headers + internal service key added    │
 └──────────────────────────────────────────────────────────┘
            │  (internal key on every proxied request)
            ▼
 [User Service]   [Catalog Service]   [Order Service]   [Notification Service]
 ```
 
+### 3.0 Route Allow-Listing
+
+Each proxied prefix forwards **only the paths it is meant to expose**; the
+gateway answers `404` for anything else *before* it reaches a backend
+(`allowOnly(...)` in `index.js`). This matters because user-service serves two
+routers (auth and clubs) at the same base path, so without it a request under
+`/api/v1/clubs` could reach an auth route such as `/:userId/role`, and the
+catalog/orders prefixes would expose internal service-to-service routes. The
+allow-list is what guarantees the access table in §2.4 — a route that isn't
+listed for a prefix simply cannot be reached through that prefix.
+
 ### 3.1 Rate Limiting (Valkey)
 
 * **What is limited:** all requests under `/api/v1/catalog` and `/api/v1/orders`. User, club, and notification routes are not rate-limited.
 * **Keying:** a separate counter per route group per client IP (`rate_limit:{catalog|orders}:{ip}`).
 * **Mechanism:** a Lua script runs the read-and-decrement atomically in Valkey, and every path through it guarantees the key has an expiry, so a bucket can't get stuck. In practice this is a fixed-window counter: the full allowance comes back when the key expires. The code and `docs/system-design/LLD/rate-limiting/token-bucket-limiter.md` call it a token bucket.
-* **Current configuration:** 1000 requests per 60 seconds for each route group, set in `services/api-gateway/middleware/rateLimiter.js`. Inline comments there record the originally intended values (`// 100` for catalog, `// 5` for orders). Tightening them is a one-line change per route.
+* **Current configuration:** 100 requests per 60 seconds for catalog, and 5 for orders, set in `services/api-gateway/middleware/rateLimiter.js`.
+* **Client identity:** the gateway sets `trust proxy`, so behind a reverse proxy (Render, Docker) `req.ip` is the real client IP from `X-Forwarded-For`, and each client gets its own bucket rather than all clients sharing the proxy's address.
 * **When exceeded:** the gateway returns `429 Too Many Requests`.
 
 ### 3.2 Double-Submit Protection (Idempotency)
@@ -200,8 +212,6 @@ The Super Admin's capabilities are application-level only. There are no infrastr
 
 These are documented so the spec doesn't overstate the system. None of them is fixed yet.
 
-* **Rate-limit keying behind a proxy:** the gateway doesn't set Express's `trust proxy`. Behind Render's proxy, `req.ip` is therefore likely the proxy's address rather than the client's, so clients may share one rate-limit bucket.
-* **Loosened rate limits:** the configured limits (1000 requests/minute) are far above the intended values (§3.1).
 * **Identity headers aren't stripped:** the gateway overwrites `x-user-role` on catalog and order routes, and overwrites `x-club-id` only when the user has a club. It never deletes client-supplied `x-user-id`, `x-user-role` or `x-club-id` headers. Every route that reads them today is either role-gated or overwrites them, so this is defense in depth, not a known exploit. Stripping them at the gateway would close it off.
 * **PostgreSQL certificate verification is off:** connections are encrypted, but `rejectUnauthorized: false` means the server certificate isn't verified (§4.3).
 * **Open CORS:** the gateway allows any origin (`cors()` with defaults). Tokens are sent in the `Authorization` header, not cookies, which limits the impact, but an explicit allow-list for the frontend's origin would be tighter.

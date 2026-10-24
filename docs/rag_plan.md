@@ -204,7 +204,7 @@ The earlier draft knew of two of these; there are three. Consequences:
     - The original `NTF-503` ID now belongs to the notification-feed ticket.
 15. A second same-day pass rewrote `PRD.md`, `REQUIREMENTS.md` and `SECURITY_AND_ACCESS.md` to match the code and deleted `Proposal.md` and `Proposal.pdf`.
     - Every PRD/REQUIREMENTS line number this plan used to cite (circuit breaker, KPI targets, status note) is gone.
-    - The review behind that rewrite also found gateway route-scoping problems in MerchFlow itself. They are reported to the user and are outside this project.
+    - The review behind that rewrite also found gateway route-scoping problems in MerchFlow itself (student→SUPER_ADMIN via a cross-prefix route, plus exposed internal routes). These were confirmed by testing and fixed on 2026-10-24 (gateway route allow-list, `trust proxy`, rate limits restored to 100/5), outside this project.
 
 ---
 

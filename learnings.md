@@ -111,7 +111,7 @@ Problems hit during development + how they were solved. Kept short for interview
 **Fix:** replaced the two-step check with one atomic Lua script (`RATE_LIMIT_SCRIPT`), the same technique this codebase already uses for the distributed lock's `LUA_RELEASE_LOCK` — Redis/Valkey executes a Lua script as a single atomic unit, so no other command can interleave between the read and the decrement. The script also defensively re-applies the key's expiry (`PEXPIRE`) on every path if it's ever found missing, so a bucket can self-heal instead of getting permanently stuck even if something *does* strip its TTL again in the future.
 
 **Verified:**
-- Fired 50 truly concurrent requests (`xargs -P 50`) at a fresh bucket (limit 1000) → counter landed at exactly `950`, not negative — proves the race is gone.
+- Fired 50 truly concurrent requests (`xargs -P 50`) at a fresh bucket (the limit was 1000 during this test; later tightened to 100 catalog / 5 orders) → counter landed at exactly `950`, not negative — proves the race is gone.
 - Manually expired a key, waited past expiry, confirmed the next request started a brand-new window at `999` with a fresh TTL — proves normal regeneration works.
 - Manually recreated the exact stuck-forever bug (counter `0`, no TTL at all) and confirmed the very next request self-healed it to a fresh 60s TTL instead of staying stuck.
 

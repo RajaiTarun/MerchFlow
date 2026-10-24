@@ -61,7 +61,7 @@ Every acceptance criterion below is checked against the current code.
 * [x] Requests under `/api/v1/catalog` and `/api/v1/orders` are counted per route group per IP.
 * [x] Exceeding the limit returns `429` with error `RATE_LIMITED` and a `Retry-After` header.
 * [x] Every path through the Lua script leaves the key with an expiry, so a bucket can't get stuck permanently (`learnings.md` #9).
-* [x] Limits are configured in `rateLimiter.js`; they are currently set to 1000 requests per 60 s for each route group.
+* [x] Limits are configured in `rateLimiter.js`: 100 requests per 60 s for catalog and 5 for orders. The gateway sets `trust proxy`, so the per-IP key is the real client IP behind a reverse proxy.
 
 ---
 

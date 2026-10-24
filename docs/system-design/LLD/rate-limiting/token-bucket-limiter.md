@@ -64,9 +64,19 @@ Keys are scoped per-route-per-IP (`rate_limit:{name}:{req.ip}`) so `catalogRateL
 
 **Verified** (`learnings.md` #9): 50 truly concurrent requests (`xargs -P 50`) against a fresh bucket landed at exactly the expected count, not negative; a manually-expired key started a clean new window; a manually-recreated "stuck" key (0, no TTL) self-healed to a fresh TTL on the very next request.
 
-## An honest, factual discrepancy — current vs. originally documented limits
+## Configured limits
 
-`docs/SECURITY_AND_ACCESS.md` §3.1 documents the intended limits as **100 req/min** for catalog and **5 req/min** for orders, and the code even has inline comments (`// 100`, `// 5`) next to the constructor calls suggesting those were the original targets. **The actual configured constants in the code right now are `createRateLimiter(1000, 60000, 'catalog')` and `createRateLimiter(1000, 60000, 'orders')` — 1000 for both.** This isn't a guess: `learnings.md` #9's own concurrency verification explicitly used "a fresh bucket (limit 1000)," confirming 1000 is the value actually in effect during development and testing, not a stray leftover. The most plausible explanation, based on the comments left in place, is that the limits were loosened during development/testing to avoid tripping the limiter while iterating — but that's inference from the comments, not something confirmed elsewhere in the codebase. Either way: **the mechanism (atomic Lua script, per-route-per-IP keying, self-healing TTL) is correct and battle-tested; the specific threshold values currently differ from what's documented as the intended production target.** See the revision note added to `docs/SECURITY_AND_ACCESS.md` §3.1.
+The limits are **100 req/min** for catalog and **5 req/min** for orders
+(`createRateLimiter(100, 60000, 'catalog')` and `createRateLimiter(5, 60000, 'orders')`
+in `services/api-gateway/middleware/rateLimiter.js`).
+
+They were loosened to 1000 for both during development to avoid tripping the
+limiter while iterating — `learnings.md` #9's concurrency test ran "against a
+fresh bucket (limit 1000)" from that period — and were restored to 100/5 on
+2026-10-24 together with the `trust proxy` setting that makes the per-IP key the
+real client IP behind a reverse proxy. The mechanism (atomic Lua script,
+per-route-per-IP keying, self-healing TTL) was correct throughout; only the
+threshold values changed.
 
 ## What was rejected, and why
 
