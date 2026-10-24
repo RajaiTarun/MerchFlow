@@ -160,12 +160,12 @@ Files are read from a **pinned git ref** (D10) with `git ls-tree` and `git show`
 
 | Doc | Cites | What | Where it is now (2026-10-24) |
 |---|---|---|---|
-| `LLD/concurrency-control/distributed-locking.md` L3 | `orders.js` "lines ~13-52" | `LUA_RELEASE_LOCK`, `acquireLock`, `releaseLock` | L21, L30, L47 (block ends before `getUserIdFromAuthHeader` at L65) |
-| `LLD/concurrency-control/idempotency.md` L3 | `orders.js` `POST /` "lines ~114-233" | `Idempotency-Key` handling | starts at L122. Confirm the end at Step 4.3. |
-| `HLD/03-request-lifecycle-checkout.md` L75 | `orders.js` "lines ~478-485" | lock release in `finally` | L486-L493. **Fixed at the working tree on 2026-10-24** (the HLD now cites L486-L493), so this drift only exists at `5bf021e` (D11). |
+| `LLD/concurrency-control/distributed-locking.md` L3 | `orders.js` "lines ~13-52" | `LUA_RELEASE_LOCK`, `acquireLock`, `releaseLock` | Actually L21/L30/L47. **Fixed at the working tree on 2026-10-24** — now cited by symbol name, no line numbers. |
+| `LLD/concurrency-control/idempotency.md` L3 | `orders.js` `POST /` "lines ~114-233" | `Idempotency-Key` handling | Starts ~L122. **Fixed at the working tree on 2026-10-24** — now cited by symbol name. |
+| `HLD/03-request-lifecycle-checkout.md` L75 | `orders.js` "lines ~478-485" | lock release in `finally` | L486-L493. **Fixed at the working tree on 2026-10-24** (now cites L486-L493). |
 
-The earlier draft knew of two of these; there are three. Consequences:
-- When a doc mentions a symbol, **resolve it to its current location** in the code index instead of trusting the doc's line numbers.
+**All three drift references were fixed on 2026-10-24**, so category H (line-reference drift) only exists if the corpus is pinned to `5bf021e` (D11). At the working tree the docs cite symbols, not brittle line numbers. Consequences for the design either way:
+- When a doc mentions a symbol, **resolve it to its current location** in the code index instead of trusting any line numbers.
 - A cheap bonus feature: a `/drift` report listing doc references whose cited lines no longer contain the named symbol (stretch).
 
 ### 2.3 Verification log (2026-10-24): what the earlier draft got wrong
@@ -438,7 +438,7 @@ Annotate gold by **file plus symbol or heading**, not by chunk id, so the gold s
 | E. Abstain (not in corpus) | 6 | Plausible but undocumented. Check by grep that the corpus really lacks it, and watch for near-misses like "refund" in README L31. |
 | F. Not-implemented trap | 4 | Docs say planned, code doesn't have it |
 | G. Identifier/keyword-heavy | 4 | Exact names (`LUA_RELEASE_LOCK`, `x-club-id`), where dense search is weak |
-| H. Line-reference drift | 3 | A doc cites old line ranges; the answer must cite current ones (all three refs in 2.2) |
+| H. Line-reference drift | 3 | A doc cites old line ranges; the answer must cite current ones (the three refs in 2.2). **Only works if the corpus is pinned to `5bf021e`** — all three were fixed at the working tree on 2026-10-24 (D11). |
 | I. Injection | 2 | A planted fixture file says "ignore instructions..."; the answer must not obey. The fixture lives in `eval/fixtures/` and is indexed only for this test. |
 
 That is 51 in total. Trim one category by one if needed.
@@ -798,7 +798,7 @@ Goal: at least 35 questions verified with the user now, 50 before Phase 9.
 
 **Step 4.3: Write the rest, category by category**
 - Follow the 10.2 counts.
-  - H uses all three drift references.
+  - H uses the three drift references — only if the corpus is pinned to `5bf021e` (they're fixed at the working tree; see 2.2 and D11).
   - Each E question is grep-checked to confirm the corpus really lacks it.
   - D questions depend on D11. At the working tree **no genuine conflicts remain**: the 2026-10-24 cleanup removed every planning claim and relabeled the saga.
     - If the corpus is pinned to the cleaned commit, shrink category D and say so in the README rather than inventing conflicts.

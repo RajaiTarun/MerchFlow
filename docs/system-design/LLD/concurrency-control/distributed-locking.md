@@ -1,6 +1,6 @@
 # Distributed Locking
 
-**Where:** `acquireLock` / `releaseLock` in `services/order-service/routes/orders.js`, lines ~13–52.
+**Where:** the `acquireLock`, `releaseLock` and `LUA_RELEASE_LOCK` helpers near the top of `services/order-service/routes/orders.js`, before the route handlers. (Cited by name rather than line number, since line numbers drift as the file changes.)
 
 ## The problem it solves
 

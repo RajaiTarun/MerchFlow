@@ -1,6 +1,6 @@
 # Idempotency
 
-**Where:** the `Idempotency-Key` handling in `services/order-service/routes/orders.js`, `POST /`, lines ~114–233.
+**Where:** the `Idempotency-Key` handling at the start of the `POST /` checkout handler in `services/order-service/routes/orders.js` — the `idempotencyKey` / `valkeyKey` / `clearIdempotencyKey` block, before the lock is acquired. (Cited by name rather than line number, since line numbers drift as the file changes.)
 
 ## The problem it solves
 
