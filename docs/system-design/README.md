@@ -1,6 +1,6 @@
 # System Design Docs
 
-This folder is interview-prep material, not planning docs. The difference matters: `docs/PRD.md`, `docs/ADR.md`, etc. describe what was *decided* and *why*, written mostly before or during the build. Everything here describes what actually *shipped*, cross-checked against the real code in `services/` — and where the two disagree, that disagreement is called out explicitly rather than smoothed over. If you're prepping to talk about this project in an interview, read from here, not from the planning docs.
+This folder is interview-prep material. `docs/PRD.md`, `docs/ADR.md` and the other top-level docs describe *what* the system does and *why* each decision was made; they were revised on 2026-10-24 to match the built system. Everything here goes one level deeper into *how* it works, cross-checked against the real code in `services/`. Where something is a known limit or gap, it's called out explicitly rather than smoothed over.
 
 ## HLD vs LLD, in this repo's terms
 

@@ -162,7 +162,7 @@ Files are read from a **pinned git ref** (D10) with `git ls-tree` and `git show`
 |---|---|---|---|
 | `LLD/concurrency-control/distributed-locking.md` L3 | `orders.js` "lines ~13-52" | `LUA_RELEASE_LOCK`, `acquireLock`, `releaseLock` | L21, L30, L47 (block ends before `getUserIdFromAuthHeader` at L65) |
 | `LLD/concurrency-control/idempotency.md` L3 | `orders.js` `POST /` "lines ~114-233" | `Idempotency-Key` handling | starts at L122. Confirm the end at Step 4.3. |
-| `HLD/03-request-lifecycle-checkout.md` L75 | `orders.js` "lines ~478-485" | lock release in `finally` | L486-L493 |
+| `HLD/03-request-lifecycle-checkout.md` L75 | `orders.js` "lines ~478-485" | lock release in `finally` | L486-L493. **Fixed at the working tree on 2026-10-24** (the HLD now cites L486-L493), so this drift only exists at `5bf021e` (D11). |
 
 The earlier draft knew of two of these; there are three. Consequences:
 - When a doc mentions a symbol, **resolve it to its current location** in the code index instead of trusting the doc's line numbers.

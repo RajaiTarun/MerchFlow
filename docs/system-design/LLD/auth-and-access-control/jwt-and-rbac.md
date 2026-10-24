@@ -42,4 +42,4 @@ Re-verifying the JWT at every downstream service (rather than trusting gateway-d
 
 ## Honest limit
 
-The trust boundary here is only as strong as "nothing can reach `:3001`–`:3004` except through the gateway or with the internal key" — and today (see [04-deployment-current-vs-planned.md](../../HLD/04-deployment-current-vs-planned.md)), that's enforced entirely by the `X-Internal-Service-Key` check, not network isolation, since there's no private Docker network yet. Anyone with `localhost` access to the host machine and the key value could call a backend service directly.
+The trust boundary here is only as strong as "nothing can reach `:3001`–`:3004` except through the gateway or with the internal key" — and that's enforced by the `X-Internal-Service-Key` check, not network isolation (see [04-deployment.md](../../HLD/04-deployment.md)). In local Node mode every port is open on the machine, and on Render's free tier every backend service has a public URL. Only Docker Compose hides the backend services behind the gateway. Anyone who has the key value can call a backend service directly in the first two modes.
