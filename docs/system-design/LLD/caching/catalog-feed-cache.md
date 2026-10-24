@@ -30,9 +30,7 @@ Four different write paths can change what the cached unfiltered first page shou
 
 The last two were **not** invalidating the cache in an earlier version (`learnings.md` #5) — only `POST /` and the delivery-slot update did. A real checkout could leave the cached listing showing pre-checkout stock for up to 60 seconds even though the underlying MongoDB number was already correct, because `PATCH /:id/stock` and `PATCH /:id/rollback` don't have "create" or "update" in their names the way the first two routes do, and were missed in the first pass. The takeaway that's worth repeating: when auditing "every write path that can make a cached read stale," check every route that touches the cached *field*, not just the routes with obviously cache-relevant names.
 
-## Measured numbers vs. the planning-doc claim
-
-`docs/PRD.md` and `docs/FRONTEND_SPEC_DOCUMENT.md` both quote a `< 50ms` cache-hit target. That number was never actually measured against this deployment topology, and turned out not to hold:
+## Measured numbers
 
 **Measured (3 rounds, local machine → Neon/Atlas/Upstash, `learnings.md` #4):**
 
@@ -41,9 +39,9 @@ The last two were **not** invalidating the cache in an earlier version (`learnin
 | Cache miss (cold, hits MongoDB) | ≈336ms |
 | Cache hit (served from Valkey) | ≈207ms |
 
-Cache hits are consistently ~40% faster than misses — the mechanism is genuinely working, verified against the actual log lines (`Cache miss: querying MongoDB` → `Page 1 cached in Valkey for 60s` → `cache hit : serving page 1 from valkey`). But **207ms is nowhere near `< 50ms`.** The reason: both a hit and a miss still pay a network round-trip from a local machine to a cloud service (Upstash) over the public internet; a hit merely *skips the second round-trip* (to MongoDB Atlas) that a miss pays on top of the first. The actual in-memory cache lookup inside Valkey is sub-millisecond — the 207ms is almost entirely network latency to a different cloud region, which a `< 50ms` figure implicitly assumed away by picturing co-located services (e.g. the still-unbuilt Docker Compose deployment in [04-deployment-current-vs-planned.md](../../HLD/04-deployment-current-vs-planned.md)).
+Cache hits are consistently ~40% faster than misses — the mechanism is genuinely working, verified against the actual log lines (`Cache miss: querying MongoDB` → `Page 1 cached in Valkey for 60s` → `cache hit : serving page 1 from valkey`). Why the absolute numbers aren't lower: both a hit and a miss still pay a network round-trip from a local machine to a cloud service (Upstash) over the public internet; a hit merely *skips the second round-trip* (to MongoDB Atlas) that a miss pays on top of the first. The actual in-memory cache lookup inside Valkey is sub-millisecond — the 207ms is almost entirely network latency to a different cloud region. Services co-located with their data stores would see much lower absolute numbers for both paths.
 
-This is worth stating plainly in an interview rather than repeating the planning doc's number: **the cache is correctly implemented and measurably effective, and the specific `< 50ms` figure was aspirational, not verified against the environment it was actually measured in.** Being able to say that — and explain *why* the gap exists — is a stronger answer than either quoting the wrong number confidently or not having measured it at all.
+This is worth stating plainly in an interview: **the cache is correctly implemented and measurably effective (≈40% faster hits), and the absolute latency is dominated by the measurement environment, not the cache.** Being able to explain *why* is a stronger answer than quoting a number without its environment.
 
 ## What was rejected, and why
 

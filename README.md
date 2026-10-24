@@ -55,7 +55,7 @@ Design patterns aren't sprinkled in for the sake of a resume line — each one i
 
 Five independent Node/Express services sit behind an API gateway that owns JWT verification, RBAC, per-route rate limiting, and header-injected trust boundaries (a service never trusts a client-supplied `userId` or `clubId` — those come from the verified token, injected as headers downstream can trust).
 
-> Full HLD/LLD breakdown — sequence diagrams, design-pattern rationale, rejected alternatives — lives in [`docs/system-design/`](docs/system-design/). The rest of `docs/` (PRD, ADRs, security spec) is older planning material, still being brought up to date.
+> Full HLD/LLD breakdown — sequence diagrams, design-pattern rationale, rejected alternatives — lives in [`docs/system-design/`](docs/system-design/). The rest of `docs/` (PRD, requirements, ADRs, security spec, frontend spec, ticket list) was revised on 2026-10-24 to describe the system as built; anything that wasn't implemented has been removed from it.
 
 | Service | Owns | Store |
 |---|---|---|

@@ -8,6 +8,8 @@
 
 **Target Architecture:** Polyglot Microservices with Event-Driven Communication 
 
+**Revision note (2026-10-24):** trimmed to what the system actually does. ADR-006 (circuit breaker and retries) was removed because it was never built, and targets that were never measured (`> 85%` cache hit ratio, `< 15ms` lock latency, `< 100ms` rollback) were dropped from ADR-003 and ADR-005. A few details were corrected to match the code (ports, row locking, status codes, quantities). ADR-005 now describes the saga as orchestrated by the Order Service instead of "choreography-based", because the Order Service directly calls the Catalog Service for every step, including the rollback. The removed text is recoverable from git history.
+
 ---
 
 ## Table of Contents
@@ -17,7 +19,6 @@
 * **ADR-003:** In-Memory Caching & Distributed Locking via Valkey (over Redis)
 * **ADR-004:** Asynchronous Event-Driven Decoupling via RabbitMQ (over Apache Kafka)
 * **ADR-005:** Distributed Transactions & Rollbacks via the Saga Pattern
-* **ADR-006:** Fault Isolation & Resilience via Circuit Breaker and Retry Patterns
 
 ---
 
@@ -72,7 +73,7 @@ We will abandon the monolithic architecture in favor of a **Decoupled Microservi
 
 #### Negative
 
-* **Operational Complexity:** Requires multi-process management and explicit network routing—mitigated during local development by utilizing process orchestrators (e.g., concurrently across local ports 3000-3003) and standardized via Docker Compose during final containerized deployment.
+* **Operational Complexity:** Requires multi-process management and explicit network routing—mitigated during local development by utilizing process orchestrators (e.g., concurrently across local ports 3000-3004) and standardized via Docker Compose during final containerized deployment.
 
 
 * **Distributed Latency:** Network hops between the API Gateway, Order Service, and User Service introduce minor serialization overhead compared to in-memory function calls.
@@ -91,7 +92,7 @@ We will abandon the monolithic architecture in favor of a **Decoupled Microservi
 
 Using a single database engine (such as MongoDB exclusively) across all microservices forces compromises between schema flexibility and transactional integrity:
 
-* **The Catalog Problem:** Merchandise items possess wildly varying, unstructured attributes (e.g., apparel requires `size` and `fabric_weight`; mugs require `volume_ml`; notebooks require `paper_type`). In a relational database, modeling this requires cumbersome Entity-Attribute-Value (EAV) tables or complex `JSONB` querying.
+* **The Catalog Problem:** Merchandise items vary in shape by type (today apparel and accessories carry `availableSizes` while mugs do not, and each new item type brings its own fields). In a relational database, modeling this requires cumbersome Entity-Attribute-Value (EAV) tables or complex `JSONB` querying.
 
 
 * **The Checkout Problem:** Order processing, user identities, and financial records require strict relational integrity, Foreign Key constraints, and uncompromising ACID compliance. Under high-concurrency flash sales, document databases relying on optimistic snapshot isolation can generate high rates of `WriteConflict` transaction aborts, degrading checkout throughput.
@@ -102,7 +103,7 @@ Using a single database engine (such as MongoDB exclusively) across all microser
 
 We will implement a **Polyglot Persistence Strategy**, pairing specific database engines to the exact mechanical requirements of each microservice domain:
 
-* **PostgreSQL (Relational Engine):** Assigned to the **User & Auth Service** and the **Order Service**. PostgreSQL provides native Multi-Version Concurrency Control (MVCC) and robust row-level locking (`SELECT ... FOR UPDATE`), queuing concurrent checkout requests predictably without data drift. All database connections will be managed via connection pooling (`pg-pool`) to minimize thread overhead.
+* **PostgreSQL (Relational Engine):** Assigned to the **User & Auth Service** and the **Order Service**. PostgreSQL provides ACID transactions and native Multi-Version Concurrency Control (MVCC). Database connections are managed through the `pg` library's connection `Pool` to minimize thread overhead. (Checkout contention is handled separately, by the Valkey lock in ADR-003, not by Postgres row locks.)
 
 
 * **MongoDB (NoSQL Document Engine):** Assigned to the **Merchandise Catalog Service**. MongoDB stores catalog items as natural, schema-less JSON documents, allowing dynamic product attributes to be indexed and queried without EAV overhead.
@@ -114,9 +115,6 @@ We will implement a **Polyglot Persistence Strategy**, pairing specific database
 #### Positive
 
 * **Optimal Tooling:** Each service interacts with a storage engine optimized for its data structure—rigid transactional tables for orders vs. flexible documents for catalog inventory.
-
-
-* **High-Contention Performance:** PostgreSQL natively handles simultaneous row lock requests during flash sales without throwing repetitive client-side write conflicts.
 
 
 
@@ -155,13 +153,13 @@ To ensure high-performance catalog browsing and prevent overselling during flash
 
 We will adopt **Valkey**—the Linux Foundation's open-source, BSD-licensed fork of Redis—as our central in-memory data store:
 
-* **Catalog Caching:** The Catalog Service will utilize Valkey to cache the first page of paginated merchandise feeds, serving read requests from memory to achieve a `> 85%` cache hit ratio and shield MongoDB from read exhaustion.
+* **Catalog Caching:** The Catalog Service will utilize Valkey to cache the first page of paginated merchandise feeds, serving repeat read requests from memory instead of MongoDB.
 
 
-* **Distributed Locking:** The Order Service will implement distributed locks via Valkey. Upon checkout initiation, the backend will acquire a lock on the target item's inventory ID (`lock:item:{id}`). This guarantees mutually exclusive access to inventory deduction logic with target average latencies of `< 15ms`.
+* **Distributed Locking:** The Order Service will implement distributed locks via Valkey. Upon checkout initiation, the backend will acquire a lock on the target item's inventory ID (`lock:item:{id}`). This guarantees mutually exclusive access to inventory deduction logic.
 
 
-* **Why Valkey over Redis:** Swapping the `redis` Docker image for `valkey/valkey` maintains 100% command and client compatibility while aligning the portfolio project with modern open-source engineering standards.
+* **Why Valkey over Redis:** Valkey is command- and client-compatible with Redis, so the standard `ioredis` client works unchanged, while the open-source license aligns the portfolio project with modern open-source engineering standards. In deployment it runs as a managed instance (for example Upstash), reached through `VALKEY_URL`.
 
 
 
@@ -169,10 +167,10 @@ We will adopt **Valkey**—the Linux Foundation's open-source, BSD-licensed fork
 
 #### Positive
 
-* **Zero Overselling Guarantee:** Eliminates race conditions during flash drops; excess concurrent requests fail cleanly once inventory hits zero without overdrawing stock.
+* **Overselling Prevention:** The lock plus an atomic stock decrement stops concurrent requests from overdrawing stock. This is verified manually for two concurrent requests; a large flash-sale load test has not been run.
 
 
-* **Database Offloading:** Dramatically reduces read query pressure on MongoDB during high-traffic catalog browsing.
+* **Database Offloading:** Repeat reads of the first catalog page are served from memory instead of MongoDB. The actual hit ratio has not been measured.
 
 
 * **Industry Relevance:** Demonstrates proactive awareness of cloud infrastructure licensing shifts during technical interviews.
@@ -208,7 +206,7 @@ When a student successfully places an order, the system must trigger delivery an
 
 We will implement an **Event-Driven Architecture** utilizing **RabbitMQ** as our message broker:
 
-* **Asynchronous Decoupling:** Upon committing a checkout transaction in PostgreSQL, the Order Service publishes an immutable `OrderPlaced` event payload to a RabbitMQ exchange and immediately returns a `200 OK` response to the user.
+* **Asynchronous Decoupling:** Upon committing a checkout transaction in PostgreSQL, the Order Service publishes an immutable `OrderPlaced` event payload to a RabbitMQ exchange and immediately returns a `201 Created` response to the user.
 
 
 * **Consumer Isolation:** The standalone Notification Service subscribes to the RabbitMQ queue, consuming `OrderPlaced` events asynchronously and executing the `InAppNotificationStrategy` without blocking order fulfillment.
@@ -247,7 +245,7 @@ We will implement an **Event-Driven Architecture** utilizing **RabbitMQ** as our
 
 In our polyglot architecture, a complete order placement requires modifying data across two distinct database engines:
 
-1. Deducting the item stock counter by `1` in **MongoDB** (Catalog Service).
+1. Deducting the item stock counter by the ordered quantity in **MongoDB** (Catalog Service).
 
 
 2. Creating the permanent order record and payment state in **PostgreSQL** (Order Service).
@@ -258,7 +256,9 @@ Because these databases do not share a unified transaction manager or two-phase 
 
 ### 3. Decision
 
-We will implement the **Saga Pattern** using a choreography-based distributed transaction approach:
+We will implement an **orchestrated Saga**, with the **Order Service acting as the orchestrator**. There is no separate coordinator service: the Order Service itself calls the Catalog Service for every step (reserve, commit, compensate) and decides what to undo when a step fails.
+
+* **Why orchestration over choreography:** with only two participants (Order and Catalog), keeping the whole sequence and its compensation logic in one place is simpler to follow, test, and debug than an event-driven rollback, where each service would react to events such as `PaymentFailed` on its own. RabbitMQ is still used, but only *after* the saga completes, for notifications.
 
 * **Forward Execution:** When checkout initiates, the Order Service acquires the Valkey lock and directs the Catalog Service to place a temporary hold (decrement) on the item inventory.
 
@@ -269,12 +269,12 @@ We will implement the **Saga Pattern** using a choreography-based distributed tr
 * **Success (`4242`):** The order commits to PostgreSQL, the inventory deduction in MongoDB is marked permanent, the Valkey lock releases, and the `OrderPlaced` event is published.
 
 
-* **Failure (`4000` / Blank):** The payment fails (`400 Bad Request`). The Order Service aborts database insertion and automatically fires a **Compensating Transaction** command to the Catalog Service.
+* **Failure (any value other than `4242`, e.g. `4000` or blank):** The payment fails (`400 Bad Request`). The Order Service aborts database insertion and automatically fires a **Compensating Transaction** command to the Catalog Service.
 
 
 
 
-* **Compensating Rollback:** Upon receiving the rollback command, the Catalog Service increments the MongoDB inventory counter back by `1`, restoring stock within `< 100ms`, after which the Valkey lock is released.
+* **Compensating Rollback:** Upon receiving the rollback command, the Catalog Service increments the MongoDB inventory counter back by the reserved quantity, after which the Valkey lock is released.
 
 
 
@@ -294,56 +294,9 @@ We will implement the **Saga Pattern** using a choreography-based distributed tr
 * **Compensating Logic Overhead:** Requires writing and maintaining dual logic for every transactional step (both the forward action and its exact reverse rollback instruction).
 
 
-
----
-
-## ADR-006: Fault Isolation & Resilience via Circuit Breaker and Retry Patterns
-
-### 1. Status
-
-**Accepted** 
-
-### 2. Context & Problem Statement
-
-The Notification Service is architected to utilize the Strategy Pattern (`NotificationStrategy`), allowing seamless future integration with third-party messaging providers (such as SendGrid for email or Twilio for WhatsApp).
-If an external messaging API experiences an outage, severe network degradation, or rate-limiting, synchronous dispatch attempts will hang. Without fault isolation, continuous retries will exhaust the Node.js event loop and thread pool, cascading failures backward and consuming system memory.
-
-### 3. Decision
-
-We will implement the **Circuit Breaker Pattern** paired with an **Exponential Backoff Retry Pattern** within the Notification Service using the `Opossum` resilience library:
-
-* **Circuit Breaker States:**
-* **Closed (Normal):** Requests flow freely to the notification dispatch logic.
+* **Orchestrator Coupling:** The Order Service has to know the Catalog Service's reserve, commit, and rollback endpoints. Adding more saga participants would grow this logic inside the Order Service; at that point an event-driven (choreographed) saga or a dedicated coordinator would be worth revisiting.
 
 
-* **Open (Tripped):** If failure thresholds (e.g., continuous timeouts or `5xx` errors) exceed defined limits, the circuit breaker trips to "Open". All subsequent dispatch attempts fail fast instantly without executing network requests, preventing thread exhaustion.
-
-
-* **Half-Open (Recovery):** After a cooldown period, the circuit lets a test request pass. If successful, the circuit closes; if it fails, it re-opens immediately.
-
-
-
-
-* **Exponential Backoff:** For transient network instability, failed dispatches execute automated retries with exponentially increasing delay intervals before triggering the circuit breaker.
-
-
-
-### 4. Consequences
-
-#### Positive
-
-* **Fail-Fast Stability:** Prevents external third-party outages from crashing internal campus microservices or draining server memory.
-
-
-* **Resource Preservation:** Frees up CPU and networking threads immediately when upstream dependencies are unresponsive.
-
-
-
-#### Negative
-
-* **Tuning Complexity:** Requires careful configuration of failure percentages, timeout thresholds, and cooldown durations to prevent the breaker from tripping prematurely during temporary network blips.
-
-**Revision note (2026-09-14):** this decision is still the intended design and its status below is unchanged — but it was never actually implemented. There is no `opossum` dependency in any service's `package.json`, and `services/notification-service/index.js` has no circuit-breaker or retry logic at all; its own inline comment says as much (`// retrying is not in my scope as of now, if i have time will try something like retry mechanism`). The Strategy-pattern seam this would attach to (`NotificationStrategy`) is real and already built (see `docs/system-design/LLD/design-patterns/strategy-observer-pattern.md`), and there's currently exactly one strategy (`InAppNotificationStrategy`, all-internal, nothing external to trip a breaker on) — so this becomes directly relevant the moment a real third-party channel (email/SMS) is added, not before. Treat ADR-006 as "designed, not yet built," not as a completed part of the system.
 
 ---
 
@@ -363,9 +316,6 @@ We will implement the **Circuit Breaker Pattern** paired with an **Exponential B
 | **ADR-004** | Async Messaging | **RabbitMQ Message Broker** | Direct REST / Apache Kafka | Lightweight local container footprint; provides decoupled publish-subscribe delivery notifications.
 
  |
-| **ADR-005** | Distributed Consistency | **Saga Pattern (Choreography)** | Two-Phase Commit (2PC) | Restores catalog inventory cleanly via compensating transactions if checkout payments fail.
-
- |
-| **ADR-006** | Fault Isolation | **Opossum Circuit Breaker + Retries** | Unbounded Synchronous Retries | Fails fast during third-party API outages, preventing thread exhaustion and system crashes.
+| **ADR-005** | Distributed Consistency | **Saga Pattern (Orchestrated by Order Service)** | Two-Phase Commit (2PC) / Choreographed (event-driven) Saga | Restores catalog inventory cleanly via compensating transactions if checkout payments fail.
 
  |

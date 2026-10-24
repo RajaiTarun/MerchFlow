@@ -5,7 +5,7 @@ How to use this file:
 - **Working agreement** says how we build: together, one small step at a time, understanding each step before writing it.
 - **Section 12 is the build plan**: numbered phases and steps, each with what to learn, what to build, how to verify it, and when it is done.
 - Sections 0-11 and 13-16 are the **design reference**: what we are building and why.
-- Every repo claim in this file was re-verified against the code on **2026-10-24 (commit `d370f7b`)**. Section 2.3 lists what was checked and what the earlier draft got wrong. Line numbers drift, so re-check before relying on one.
+- Every repo claim in this file was re-verified against the code on **2026-10-24 (commit `d370f7b`)**, with the same-day docs cleanup of `ADR.md` and `FEATURES_TICKET_LIST.md` applied (ADR line numbers below describe the cleaned file). Section 2.3 lists what was checked and what the earlier draft got wrong. Line numbers drift, so re-check before relying on one.
 
 `plan.md` (the old postmortem version) is superseded by this file and no longer exists in the repo. The kickoff prompt is Appendix B.
 
@@ -29,7 +29,28 @@ Last updated: 2026-10-24
 | 9. Full eval and ablations | 9.1-9.5 | not started |
 | 10. README and demo | 10.1-10.3 | not started |
 
-**On disk:** `ask-merchflow/docker-compose.yml` (drafted), plus empty folders `ask-merchflow/ask_merchflow/` and `ask-merchflow/tests/`. Nothing installed, nothing committed.
+**On disk:** `ask-merchflow/docker-compose.yml` (drafted), plus empty folders `ask-merchflow/ask_merchflow/` and `ask-merchflow/tests/`. Nothing installed; `ask-merchflow/` is not committed.
+
+**Docs cleanup (2026-10-24, uncommitted):** `docs/ADR.md` was trimmed to what the system actually does (ADR-006 removed, unmeasured targets dropped, a few details corrected), and the stale ADR-006 pointer in `docs/FEATURES_TICKET_LIST.md` was fixed. Effect on this plan:
+- The failing-card conflict is resolved.
+- The circuit-breaker conflict now rests on planning docs vs the `NTF-503` revision note and the README, with no ADR involved.
+- The corpus should be pinned to a git tag once the cleanup is committed (D10). Creating the tag is a git action for the user.
+
+**Second docs pass (2026-10-24, uncommitted):**
+- `PRD.md`, `REQUIREMENTS.md` and `SECURITY_AND_ACCESS.md` were rewritten to describe the implemented system, with every metric removed until it has been measured.
+- `Proposal.md` and `Proposal.pdf` were deleted.
+
+Effect on this plan:
+- Those three docs are no longer planning material (D2).
+- The circuit-breaker question becomes a not-implemented trap (category F), not a conflict.
+- Category D loses its PRD-based candidates (Step 4.3).
+- README L58 has since been updated to match.
+
+**Third docs pass (2026-10-24, uncommitted):**
+- `FRONTEND_SPEC_DOCUMENT.md` and `FEATURES_TICKET_LIST.md` were rewritten to describe the system as built.
+- README L58 was updated.
+- The `< 50ms` claim was removed from `learnings.md` #4 and `catalog-feed-cache.md`, and the 207/336 ms figures are confirmed correct.
+- Result: at the working tree, almost no planning-vs-built conflicts remain. Decide D11 (which commit to pin) before writing category D questions.
 
 **Environment (checked 2026-10-24):**
 - System Python is 3.9.6, which is too old. `uv` 0.12 and Homebrew Python 3.13 are installed.
@@ -93,7 +114,7 @@ Last updated: 2026-10-24
 
 ## 2. Corpus audit (verified 2026-10-24)
 
-Files are enumerated with `git ls-files`, so anything git-ignored (`.env*`, `node_modules`, `todo.md`) is never even seen. The explicit exclusion list below is applied on top of that.
+Files are read from a **pinned git ref** (D10) with `git ls-tree` and `git show`, so uncommitted edits and anything git-ignored (`.env*`, `node_modules`, `todo.md`) are never even seen. The explicit exclusion list below is applied on top of that.
 
 | Source | Content | `source_type` | Authority | Notes |
 |---|---|---|---|---|
@@ -103,37 +124,37 @@ Files are enumerated with `git ls-files`, so anything git-ignored (`.env*`, `nod
 | `docs/system-design/**` (26 files: HLD 5, LLD 20, README 1) | Current design docs with mermaid diagrams | `design_doc` | 0.90 | Cite code with line ranges that drift (see 2.2). |
 | `learnings.md` | Bugs and measured results, 9 entries (`### 1.` to `### 9.`) | `learning` | 0.90 | One chunk per entry. Contains *measured* facts that override planning claims. |
 | `docs/QA_CHECKLIST.md` | Manual QA checklist with checked boxes | `design_doc` | 0.80 | |
-| `docs/SECURITY_AND_ACCESS.md` | Security spec, "Version 2.0, Approved for Engineering Sprint" | **open (D2)** | 0.80 or 0.50 | The earlier draft called it a verified security model. README L58 calls the "security spec" older planning material. |
-| `docs/ADR.md`, `docs/PRD.md`, `docs/REQUIREMENTS.md`, `docs/FEATURES_TICKET_LIST.md`, `docs/FRONTEND_SPEC_DOCUMENT.md`, `docs/Proposal.md` | Older planning material | `planning_doc` | 0.50 | Describe intent, not reality. Two of them carry dated status notes that *are* current: ADR-006's revision note (ADR.md L346) and PRD L116-L117 (see D3). |
+| `docs/PRD.md`, `docs/REQUIREMENTS.md`, `docs/SECURITY_AND_ACCESS.md`, `docs/ADR.md`, `docs/FRONTEND_SPEC_DOCUMENT.md`, `docs/FEATURES_TICKET_LIST.md` | Rewritten or trimmed on 2026-10-24 to describe the implemented system | **open (D2)** | 0.80 suggested | No unmeasured metrics (only the cache hit/miss latency, in PRD §4). README L58 now says these docs describe the system as built. At the working tree, **no planning-only docs remain**, see D11. |
 | `render.yaml`, `docker-compose.yml`, `services/*/package.json`, Dockerfiles | Deploy and dependency config | **open (D4)** | | Not in the earlier draft. Some evidence lives only here, e.g. "no `opossum` dependency in any `package.json`". |
 | `docs/Notes.md` | A raw setup chat dump (1,081 lines, absolute local paths) | excluded | | Noise, no knowledge. Listed as excluded in the README. |
 | `docs/rag_plan.md` (this file) | The build plan | **excluded** | | Contains the eval gold answers. Indexing it would leak them into retrieval. |
 | `ask-merchflow/**` | The tool itself, including `eval/questions.jsonl` | **excluded** | | Same leak risk, plus it isn't MerchFlow. |
-| `docs/Proposal.pdf`, images, `package-lock.json`, `dist`, `build` | Binary or generated | excluded | | |
+| Images, `package-lock.json`, `dist`, `build` | Binary or generated | excluded | | `docs/Proposal.md` and `docs/Proposal.pdf` were deleted on 2026-10-24. |
 
 ### 2.1 Known conflicts (eval gold for category D; each one verified)
 
-1. **Cache-hit latency**
-   - Claimed: `FRONTEND_SPEC_DOCUMENT.md` L87 says "sub-50ms network response times".
-   - Measured: `learnings.md` #4 (L45-L49) and `catalog-feed-cache.md` (L35-L46) give ≈207 ms for a hit and ≈336 ms for a miss, measured from a local machine against cloud services.
-   - Nuance: those two docs say *both* PRD and FRONTEND_SPEC quote `< 50ms`, but **PRD no longer does**. PRD now has `< 15ms` lock latency (L109) and `> 85%` hit ratio (L111), plus a status note (L116-L117) that these were never benchmarked.
-   - Gold: prefer the measured sources, and say the planning number was aspirational.
-2. **Circuit breaker**
-   - Planned: PRD (L100, L134), REQUIREMENTS NFR2.2 (L79) and FEATURES_TICKET_LIST `NTF-503` (L259, L383) describe an Opossum circuit breaker in the Notification Service.
-   - The ADR itself: ADR-006's Decision section (L311-L329) says "we will implement" it, but its **revision note (L346, dated 2026-09-14) says it was never built**: no `opossum` in any `package.json`, no retry or breaker code.
-   - README L124: "No circuit breaker on notification dispatch."
-   - Code: no hits for `opossum` or `circuit` anywhere in `services/`.
-   - Gold: planned, not implemented.
-   - Why it's a good test: a retriever that only finds the ADR-006 Decision chunk, and misses the revision note in the Consequences part, will answer wrong.
-3. **Saga style** (gold not settled yet, see D5)
-   - Docs: ADR-005 (L261) says "choreography-based". `saga-rollback.md` explicitly defends that label (L7, L42): "choreography, not orchestration: Order Service directly calls Catalog Service's rollback endpoint ... there's no separate saga-coordinator service."
+1. **Cache-hit latency** (resolved at the working tree; still a conflict at commit `5bf021e`, see D11)
+   - At the working tree, no doc quotes a `< 50ms` figure any more. `learnings.md` #4, `catalog-feed-cache.md` and PRD §4 all give ≈207 ms for a hit vs ≈336 ms for a miss (3 rounds, local machine against the cloud services). The user confirms these numbers are correct.
+   - Gold for the current corpus: ≈207 ms hit vs ≈336 ms miss, with the environment caveat. That makes it a single-hop B question.
+   - At `5bf021e`: FRONTEND_SPEC L87 says "sub-50ms" against the measured numbers. Gold: prefer the measured source.
+2. **Circuit breaker** (a not-implemented trap, category F)
+   - At the working tree, no doc describes it as planned any more.
+     - The original `NTF-503` ticket was dropped, and its ID was reused for the notification feed.
+     - PRD §5.2, REQUIREMENTS NFR2.2, the `ADR.md` header note (L11) and README L124 all say it was not built.
+     - Code: no hits for `opossum` or `circuit` anywhere in `services/`.
+   - Gold: no, it is not implemented. The answer should cite the "not built" lines.
+   - At `5bf021e` (D11): PRD, REQUIREMENTS, ADR-006 and the original `NTF-503` described it as planned, so it was a true conflict.
+3. **Saga style** (resolved at the working tree; still a conflict at `5bf021e`, see D11)
+   - On 2026-10-24, ADR-005 and `saga-rollback.md` were relabeled: they now say "orchestrated saga, Order Service is the orchestrator", and choreography is listed as a rejected alternative. At the working tree, docs and code agree.
+   - Gold for the current corpus: orchestration by Order Service, chosen over choreography because with two participants keeping the compensation logic in one place is simpler.
+   - The notes below describe the pre-cleanup docs (`5bf021e`), where this is still a genuine conflict:
+   - Docs: ADR-005 (L259) says "choreography-based". `saga-rollback.md` explicitly defends that label (L7, L42): "choreography, not orchestration: Order Service directly calls Catalog Service's rollback endpoint ... there's no separate saga-coordinator service."
    - Code: `orders.js` calls `compensateInventory` from the checkout `catch` (L429-L431), and it sends `PATCH /:id/rollback` to Catalog. In the textbook sense (services reacting to events, with no one service commanding the others), Order Service directing the steps is closer to **orchestration by Order Service**.
    - So the docs use their own definition. Decide the gold together at Step 4.2.
-4. **Failing card**
-   - ADR-005 L272 says "`4000` / Blank" fails, and README L112 says `4000` fails.
-   - Code (`orders.js` L356-L362): only `'4242'` succeeds, and **any** other value throws `PAYMENT_FAILED`.
-   - This isn't a contradiction, since `4000` does fail; the docs just under-specify.
-   - Gold: any non-`4242` value fails.
+4. **Failing card** (resolved by the 2026-10-24 ADR cleanup, so no longer a conflict)
+   - Before the cleanup, ADR-005 said "`4000` / Blank" fails, while the code fails on **any** value other than `4242` (`orders.js` L356-L362).
+   - ADR-005 now says any value other than `4242` fails (L270), which matches the code and README L112.
+   - Use it as a single-hop question (Appendix A #9), not as category D. The category now needs replacement conflicts, see Step 4.3.
 
 ### 2.2 Doc-to-code references and drift (eval gold for category H)
 
@@ -151,9 +172,9 @@ The earlier draft knew of two of these; there are three. Consequences:
 
 1. Corpus sizes were stale: backend is about 4.2k lines, not 3k; docs are about 3.1k lines, not 5k.
 2. PRD no longer contains the `< 50ms` figure (2.1 #1).
-3. ADR-006 now carries a revision note saying it is not implemented (2.1 #2).
+3. ADR-006 carried a revision note saying it was never implemented; the ADR was then removed from `ADR.md` altogether in the 2026-10-24 cleanup (2.1 #2).
 4. `saga-rollback.md` explicitly argues "choreography" using its own definition (2.1 #3).
-5. README calls the security spec older planning material, so the 0.80 authority is questionable (D2).
+5. README calls the security spec older planning material, so the 0.80 authority was questionable (D2). Since the 2026-10-24 rewrite, the security spec describes the implemented system, and the README line is the stale one.
 6. The word "refund" does appear once: README L31, in the problem statement ("an awkward refund DM"). The abstain question about refunds must not treat that line as evidence of a refund feature.
 7. Appendix A #15 ("which payment gateway?") is **answered** by README L112 ("no real payment gateway"). It is not an abstain question; re-categorize it.
 8. The checkout handler (`orders.js` L77-L495, about 420 lines) is **nested** inside the exported factory.
@@ -173,6 +194,17 @@ The earlier draft knew of two of these; there are three. Consequences:
     - `learnings.md` has 9 entries.
     - Polling, not WebSockets: README L74 and L122, QA_CHECKLIST L105.
     - RabbitMQ, chosen over Kafka: ADR-004.
+14. The 2026-10-24 docs cleanup changed the corpus after the first verification pass:
+    - `ADR.md` lost ADR-006 and now has 5 ADRs, so the ADR line numbers in this plan were re-checked against the cleaned file.
+    - The failing-card conflict (2.1 #4) no longer exists.
+    - `FEATURES_TICKET_LIST.md` L271 no longer points at the removed ADR-006.
+    - Docs keep changing, so pin the corpus to a git ref (D10) to keep the gold answers stable.
+16. A third pass rewrote `FRONTEND_SPEC_DOCUMENT.md` and `FEATURES_TICKET_LIST.md` and removed the `< 50ms` claim everywhere.
+    - The `NTF-503` revision note (old L271) and the FRONTEND_SPEC telemetry note (old L26) no longer exist.
+    - The original `NTF-503` ID now belongs to the notification-feed ticket.
+15. A second same-day pass rewrote `PRD.md`, `REQUIREMENTS.md` and `SECURITY_AND_ACCESS.md` to match the code and deleted `Proposal.md` and `Proposal.pdf`.
+    - Every PRD/REQUIREMENTS line number this plan used to cite (circuit breaker, KPI targets, status note) is gone.
+    - The review behind that rewrite also found gateway route-scoping problems in MerchFlow itself. They are reported to the user and are outside this project.
 
 ---
 
@@ -270,7 +302,7 @@ Idempotent: re-running updates only chunks whose `content_hash` changed.
 - Split on heading hierarchy (`#` to `###`). Prepend the full **heading path** to each chunk's text. Target 200-500 tokens, splitting long sections on paragraph boundaries.
 - Keep each **mermaid block** together with the paragraph that introduces it, and store it as text; it contains participant and step names, which are searchable.
 - `learnings.md`: one chunk per `### N.` entry (9 entries).
-- `ADR.md`: one chunk per ADR section (Status / Context / Decision / Consequences), with the ADR id in the heading path so "ADR-005" is searchable. ADR-006's revision note (L346) sits under its Consequences heading; make sure it is retrievable on its own (D3).
+- `ADR.md`: one chunk per ADR section (5 ADRs × Status / Context / Decision / Consequences), with the ADR id in the heading path so "ADR-005" is searchable. The revision note at the top (L11) sits before ADR-001; make it its own chunk so it is retrievable on its own (D3).
 - Tables: keep a whole table with its caption, and don't split mid-row.
 
 ### 5.3 Link extraction (doc ↔ code)
@@ -321,7 +353,7 @@ Single-shot retrieval fails on questions that need to follow references ("what h
 | `search_code` | `query`, `service?`, `k?` | ranked code chunks (id, path:lines, symbol, snippet) |
 | `search_docs` | `query`, `source_type?`, `k?` | ranked doc chunks (id, path, heading_path, authority, snippet) |
 | `find_symbol` | `name` | exact definitions from `symbols` (path, lines) |
-| `open_file` | `path`, `start`, `end` | the exact lines. Only files in the indexed list; reject anything else, including `..` tricks. Cap at about 200 lines. |
+| `open_file` | `path`, `start`, `end` | the exact lines, read from the pinned ref (D10) so line numbers match the index. Only files in the indexed list; reject anything else, including `..` tricks. Cap at about 200 lines. |
 | `trace_calls` | `service`, `route?` | outgoing and incoming `edges` for that service or route |
 
 No shell, no write, no network tools.
@@ -446,7 +478,7 @@ Run at temperature 0. With about 50 questions, report counts (e.g. "41/50") next
 ask-merchflow/
   docker-compose.yml           # pgvector on 127.0.0.1:5433
   pyproject.toml               # uv-managed, Python 3.11
-  .env.example                 # ANTHROPIC_API_KEY, LLM_MODEL, LLM_MODEL_BULK, EMBED_MODEL, DB_URL, REPO_ROOT
+  .env.example                 # ANTHROPIC_API_KEY, LLM_MODEL, LLM_MODEL_BULK, EMBED_MODEL, DB_URL, REPO_ROOT, CORPUS_REF
   .gitignore                   # .venv, __pycache__, .env, caches
   ask_merchflow/
     config.py  db.py  schema.sql  api.py  cli.py
@@ -491,14 +523,16 @@ Settle each one at the step listed, not before. The recommendation is a starting
 | # | Decision | Settle at | Options | Recommendation |
 |---|---|---|---|---|
 | D1 | Python version | 1.1 | 3.11 via `uv` / Homebrew 3.13 | 3.11 via `uv`: it matches the plan and has the safest wheels for `fastembed`, `onnxruntime` and `tree-sitter` |
-| D2 | `SECURITY_AND_ACCESS.md` source type | 2.1 | `design_doc` 0.80 (earlier draft) / `planning_doc` 0.50 | `planning_doc` 0.50, since README L58 calls it older planning material |
-| D3 | Dated status/revision notes inside planning docs (ADR.md L346, PRD L116-L117) | 2.1 / 2.3 | leave as part of the doc's chunk / make them their own chunk / also give them higher authority | Their own chunk with a heading path that names them (e.g. `ADR.md > ADR-006 > Revision note`), at the doc's authority. The conflict prompt already treats dated notes as current. |
+| D2 | Source type of the docs rewritten on 2026-10-24 (`PRD.md`, `REQUIREMENTS.md`, `SECURITY_AND_ACCESS.md`, `ADR.md`) | 2.1 | `planning_doc` 0.50 / `design_doc` 0.80 | `design_doc` 0.80: they now describe the implemented system and were checked against the code. Revisit if they drift again. README L58 still calls them planning material; fix the README or note it as a known stale line. |
+| D3 | Dated revision notes (at the working tree: the notes at the top of ADR, PRD, REQUIREMENTS, SECURITY, FRONTEND_SPEC and FEATURES_TICKET_LIST; at `5bf021e`: ADR-006's note, the `NTF-503` note, the FRONTEND_SPEC telemetry note and PRD's KPI status note) | 2.1 / 2.3 | leave as part of the doc's chunk / make them their own chunk / also give them higher authority | Their own chunk with a heading path that names them (e.g. `ADR.md > Revision note (2026-10-24)`, `FEATURES_TICKET_LIST.md > NTF-503 > Revision note`), at the doc's authority. The conflict prompt already treats dated notes as current. |
 | D4 | Config files (`render.yaml`, root `docker-compose.yml`, `services/*/package.json`, Dockerfiles) | 2.1 | exclude (earlier draft) / index as a `config` source type | Index `package.json` (dependency block), `render.yaml` and `docker-compose.yml` as `config`, authority 1.0; skip Dockerfiles. "Is there an `opossum` dependency?" can only be answered from `package.json`. |
-| D5 | Gold answer for the saga question (A #6) | 4.2 | "docs say choreography, code reads as orchestration" / "choreography as the docs define it" / "both, explaining the definitions" | Both: report the docs' label and their definition, then note that Order Service directing the compensation reads as orchestration in the textbook sense, and mark it as a conflict |
+| D5 | Gold answer for the saga question (A #6), only if the corpus is pinned to `5bf021e`; at the working tree the docs now say orchestration | 4.2 | "docs say choreography, code reads as orchestration" / "choreography as the docs define it" / "both, explaining the definitions" | Both: report the docs' label and their definition, then note that Order Service directing the compensation reads as orchestration in the textbook sense, and mark it as a conflict |
 | D6 | Identifier handling in full-text search | 3.2 | query-side splitting only / also add identifier-expanded text to the indexed `tsv` (schema change, re-ingest) | Decide after running `to_tsvector` on real identifiers |
 | D7 | Gold answer for the `x-club-id` question (A #12) | 4.2 | see 2.3 #10 | Gold says: overwritten from the verified JWT when the user has a `clubId`; not stripped otherwise; every route that reads it is gated at the gateway (CLUB_ADMIN, with SUPER_ADMIN always allowed), and `x-user-role` is always overwritten |
 | D8 | One-off scripts in `services/*/db/` | 2.4 / 6.2 | index normally / tag `kind=script` / exclude | Index them, tag their symbols and edges `kind=script`, and hide script edges from `trace_calls` by default |
 | D9 | Where the fixed-size ablation index lives | 5.3 | second database in the same container / `chunker` column in `chunks` | A second database (`askmerchflow_fixed`), so the two indexes can't mix |
+| D11 | Which commit to pin: the cleaned docs, or the messy pre-cleanup docs | 2.1 (with D10) | cleaned commit (after the 2026-10-24 cleanup is committed) / `5bf021e` (the last commit before it) | **`5bf021e`, if the eval should test conflict handling.** The cleanup removed nearly every planning-vs-built conflict, and those conflicts were the main source of hard D/F questions (Section 1). Pinning the pre-cleanup commit keeps them while `main` stays clean. Its code is identical to `d370f7b`. The cost: answers describe the old docs, so say so in the README. Pick the cleaned commit if conflict handling matters less than describing the current docs. |
+| D10 | Pin the indexed corpus to a git ref | 1.3 / 2.1 | index the working folder / pin to a tag (read with `git ls-tree` and `git show <ref>:<path>`) | Pin. Commit the docs cleanup, then the user creates a tag such as `rag-corpus-v1` (a git action for the user, not the assistant). `CORPUS_REF` in `.env` names it. Ingest and `open_file` read from that ref, so uncommitted files are never indexed, later doc edits on `main` can't shift the gold answers, and the ref's commit sha doubles as the "indexed git sha" in every answer. Re-tag on purpose, and re-verify the gold, when the index should include newer docs. |
 
 ---
 
@@ -522,7 +556,7 @@ Settle each one at the step listed, not before. The recommendation is a starting
 **Step 0.2: Why the conflicts matter**
 - Learn: walk through 2.1-2.3. Cover why planning docs disagree with code, why that makes the best eval questions, and why "the system knows when it doesn't know" is the headline feature.
 - Decide: D1.
-- Done when: you can explain each of the four conflicts and its correct answer in one sentence.
+- Done when: you can explain why the 2026-10-24 docs cleanup removed most conflicts, what pinning `5bf021e` would keep (D11), and the correct answer to each conflict in 2.1.
 
 ---
 
@@ -567,8 +601,9 @@ Goal: `GET /health` reports that the database and pgvector are up.
   - Why only `ask-merchflow/.env` is ever loaded, never MerchFlow's.
   - A **local-only DB guard**: refuse any `DB_URL` whose host isn't `localhost`, `127.0.0.1` or `::1`. That enforces "never Neon" in code instead of relying on memory.
   - `REPO_ROOT` resolves relative to the tool folder.
+  - `CORPUS_REF`: the git ref (tag or commit) the index is built from (D10). It defaults to `HEAD` until the tag exists.
 - Build:
-  - `.env.example` with `ANTHROPIC_API_KEY`, `LLM_MODEL`, `LLM_MODEL_BULK`, `EMBED_MODEL`, `DB_URL`, `REPO_ROOT`.
+  - `.env.example` with `ANTHROPIC_API_KEY`, `LLM_MODEL`, `LLM_MODEL_BULK`, `EMBED_MODEL`, `DB_URL`, `REPO_ROOT`, `CORPUS_REF`.
   - `ask_merchflow/config.py`: a frozen `Settings` dataclass, `load_settings()` and `require_local_db()`.
   - `tests/test_config.py`: a Neon-style URL is refused and the default URL is accepted.
   - The user creates `.env` from the example when an API key is first needed (Phase 7). The assistant never reads it.
@@ -618,11 +653,11 @@ Goal: one command builds the index, prints chunk counts per source type, and 10 
 
 **Step 2.1: Corpus discovery and source map**
 - Learn:
-  - Why enumerate with `git ls-files`: git-ignored files (`.env*`, `node_modules`, `todo.md`) are never even opened.
+  - Why read from a **pinned git ref** (D10) with `git ls-tree` and `git show`: uncommitted edits and git-ignored files (`.env*`, `node_modules`, `todo.md`) are never even opened, and a later doc edit on `main` can't move the gold answers.
   - The explicit exclusion list (5.5) and the leak risk it guards against: this plan and `eval/` contain gold answers.
   - Path rules that assign `source_type`, `authority` and `service`.
-- Decide: D2, D3 and D4.
-- Build: `ask_merchflow/ingest/corpus.py`: `discover(repo_root) -> list[SourceFile]`, with a dry-run printout.
+- Decide: D2, D3, D4 and D10.
+- Build: `ask_merchflow/ingest/corpus.py`: `discover(repo_root, ref) -> list[SourceFile]`, with a dry-run printout that starts with the ref and its commit sha.
 - Verify: a dry run prints file counts per `source_type` and every skipped file with its reason. `Notes.md`, `rag_plan.md` and `ask-merchflow/` appear only under "skipped".
 - Done when: counts match Section 2 (46 backend files, 21 frontend files, 26 system-design docs, and so on).
 - Explain it back: "The corpus is defined by explicit rules, and anything that could leak eval answers or secrets is excluded before chunking."
@@ -645,7 +680,7 @@ Goal: one command builds the index, prints chunk counts per source type, and 10 
   - How tokens are counted: the embedder's tokenizer if it's easy to reach, otherwise a word-count estimate. Decide here.
 - Build: `ask_merchflow/ingest/md_chunker.py`, plus tests on small inline markdown samples.
 - Verify: print the chunks for three files.
-  - `ADR.md`: 6 ADRs × 4 sections, plus the table of contents and the summary matrix.
+  - `ADR.md`: the header with its revision note, the table of contents, 5 ADRs × 4 sections and the summary matrix.
   - `learnings.md`: 9 chunks.
   - `saga-rollback.md`: mermaid kept intact.
   - Then `uv run pytest`.
@@ -684,7 +719,7 @@ Goal: one command builds the index, prints chunk counts per source type, and 10 
 **Step 2.6: Ingest runner (idempotent)**
 - Learn:
   - The reconcile loop: new hash → insert; unchanged → skip; gone → delete, together with its links. `symbols` is rebuilt per file.
-  - Recording the indexed git sha so every answer can say which commit it describes. A small `meta` table is the likely place; decide here.
+  - Recording the indexed git sha (the resolved `CORPUS_REF`, D10) so every answer can say which commit it describes. A small `meta` table is the likely place; decide here.
 - Build: `ask_merchflow/ingest/run.py` and `ingest/__main__.py`, run as `uv run python -m ask_merchflow.ingest --repo ..`.
 - Verify:
   - The first run prints chunks per `source_type` and the skipped files.
@@ -696,7 +731,7 @@ Goal: one command builds the index, prints chunk counts per source type, and 10 
     4. catalog `PATCH /:id/stock`
     5. `injectClubId`
     6. ADR-005 Decision
-    7. ADR-006 revision note
+    7. a dated revision note (D3), e.g. the one at the top of `ADR.md`
     8. `learnings.md` #4
     9. the `saga-rollback.md` mermaid block
     10. one frontend page
@@ -735,7 +770,7 @@ Goal: `search "compensateInventory"` puts the right chunks in the top 3.
 **Step 3.5: Authority weighting and per-file cap**
 - Learn: the `0.7 + 0.3 * authority` factor and why it stays mild. Also why 2 chunks per file: the checkout file would otherwise flood every result.
 - Build: `ask_merchflow/retrieve/weighting.py`.
-- Verify: for "does the notification service have a circuit breaker?", README L124 and the ADR-006 revision note rank above the PRD and REQUIREMENTS chunks without hiding them.
+- Verify: for "does the notification service have a circuit breaker?", README L124 and the PRD/REQUIREMENTS "not built" lines rank at the top. If the corpus is pinned to `5bf021e`, they should also rank above the planning chunks that describe the breaker, without hiding them.
 
 **Step 3.6: Search entry point, CLI and `/search`**
 - Build:
@@ -765,7 +800,9 @@ Goal: at least 35 questions verified with the user now, 50 before Phase 9.
 - Follow the 10.2 counts.
   - H uses all three drift references.
   - Each E question is grep-checked to confirm the corpus really lacks it.
-  - D questions come from 2.1.
+  - D questions depend on D11. At the working tree **no genuine conflicts remain**: the 2026-10-24 cleanup removed every planning claim and relabeled the saga.
+    - If the corpus is pinned to the cleaned commit, shrink category D and say so in the README rather than inventing conflicts.
+    - If it is pinned to `5bf021e` (pre-cleanup), D can use: cache latency, circuit breaker, failing card, the PRD KPI targets vs its "not benchmarked" note, FRONTEND_SPEC's real-time/SSE claims vs polling, and saga style.
 - The user confirms each gold annotation before it goes in.
 - Verify: the checker passes at 35 questions or more.
 
@@ -833,7 +870,7 @@ Goal: the first baseline table exists.
 
 **Step 6.3: The read-only tools**
 - Build: `ask_merchflow/agent/tools.py` with `find_symbol`, `trace_calls` and `open_file`.
-  - `open_file` serves only files in the indexed list, resolves the path and rejects escapes, caps output at 200 lines, and returns line-numbered text.
+  - `open_file` serves only files in the indexed list, reads them from the pinned ref with `git show` (D10), resolves the path and rejects escapes, caps output at 200 lines, and returns line-numbered text.
   - Tests cover the sandbox.
 - Verify:
   - `trace_calls("order-service")` lists the user-service and catalog-service calls.
@@ -969,8 +1006,8 @@ Needs `ANTHROPIC_API_KEY` in `ask-merchflow/.env`. The user creates that file; t
 
 ## 15. Demo script (5 minutes)
 1. "Where is zero-overselling enforced?" This is multi-hop: the lock in order-service plus the atomic `$gte` decrement in catalog-service. Show the trace.
-2. "Does the notification service have a circuit breaker?" This is a conflict: PRD, REQUIREMENTS and NTF-503 say yes; ADR-006's revision note, the README and the code say no. Show the `conflicts` field.
-3. "How fast is a catalog cache hit?" The answer prefers the measured ≈207 ms over the planning docs' sub-50ms.
+2. "Does the notification service have a circuit breaker?" A not-implemented trap. The answer says no and cites the README, PRD and REQUIREMENTS "not built" lines; at `5bf021e` it also flags the planning docs that described one.
+3. "How fast is a catalog cache hit?" ≈207 ms vs ≈336 ms for a miss, with the cross-region environment caveat. At `5bf021e`, the answer also prefers this over FRONTEND_SPEC's sub-50ms.
 4. "How does MerchFlow handle refunds?" It abstains and shows what it searched, without being fooled by the one "refund" in README L31.
 5. Flip to the ablation table: pipeline vs agent on multi-hop questions, and what the agent cost.
 
@@ -997,10 +1034,10 @@ Be ready to explain:
 | 3 | C | What prevents two students buying the last unit? | The lock in order-service **and** the atomic `findOneAndUpdate({stock: {$gte: quantity}})` in `catalog-service/routes/catalog.js` | OK: `PATCH /:id/stock` L279, condition L320-L323 |
 | 4 | A | How many times does compensation retry, with what backoff? | `compensateInventory.js`: 3 attempts, 100 ms then 200 ms | OK: `MAX_ATTEMPTS = 3`, `sleep(attempt * 100)`, 3 s timeout per attempt |
 | 5 | C | What happens if payment fails after stock is reserved? | Checkout `catch` → `compensateInventory` → catalog `PATCH /:id/rollback`, idempotent via `InventoryCompensation`; `saga-rollback.md` | OK: `orders.js` L429-L431; `catalog.js` L430, L457, L490 |
-| 6 | D | Is the saga choreography or orchestration? | Conflict: the docs' label and definition vs the code's control flow | **Gold open (D5).** The docs actively argue choreography (ADR-005 L261, `saga-rollback.md` L7, L42). |
-| 7 | D/F | Does the notification service use a circuit breaker? | Planned (PRD, NFR2.2, NTF-503, ADR-006 Decision); not implemented (ADR-006 revision note, README L124, no code) | OK, with an update: the ADR itself now says "designed, not yet built" (L346) |
-| 8 | D | What cache-hit latency does the catalog achieve? | Sub-50ms claim vs measured ≈207 ms hit / ≈336 ms miss | OK, with nuance: the claim is in FRONTEND_SPEC L87; **PRD no longer has it** |
-| 9 | D | Which cards make payment fail? | ADR says `4000` / blank; code fails on anything but `4242` | OK: ADR L272, README L112, `orders.js` L356-L362 |
+| 6 | B (D at `5bf021e`) | Is the saga choreography or orchestration? | Working tree: orchestration by Order Service, with the rationale (ADR-005, `saga-rollback.md`), and docs and code agree. At `5bf021e`: a conflict between the docs' "choreography" label and the code's control flow (D5). | The docs were relabeled on 2026-10-24. D5 only matters if the corpus is pinned to `5bf021e`. |
+| 7 | F | Does the notification service use a circuit breaker? | Not implemented per README L124, PRD Section 5.2, REQUIREMENTS NFR2.2, the `ADR.md` header note (L11) and the code. At `5bf021e`, PRD, REQUIREMENTS, ADR-006 and the original NTF-503 also described it as planned (D11). | **Re-categorized from D/F.** After the 2026-10-24 rewrites, only the ticket body still describes it as planned. |
+| 8 | B (D at `5bf021e`) | What cache-hit latency does the catalog achieve? | ≈207 ms hit / ≈336 ms miss with the environment caveat (`learnings.md` #4, `catalog-feed-cache.md`, PRD §4) | At the working tree nothing quotes `< 50ms`. At `5bf021e`, FRONTEND_SPEC L87's "sub-50ms" makes this a conflict. |
+| 9 | A | Which cards make payment fail? | Any value other than `4242` (ADR-005 L270, README L112, `orders.js` L356-L362) | **Re-categorized from D.** The old ADR wording ("`4000` / blank") was corrected in the 2026-10-24 cleanup, so docs and code now agree. |
 | 10 | B | Why does the catalog use MongoDB and orders use Postgres? | `polyglot-persistence.md`, ADR-002, README | Not yet checked; do it at 4.2 |
 | 11 | A | Where does `student_email` on an order come from? | The decoded JWT at checkout; `learnings.md` #6 | OK: `jwt.decode` L106 (decode, not verify; it trusts the gateway's check), inserted L380 |
 | 12 | C | Can a client forge `x-club-id`? Trace it. | Gateway `authMiddleware` + `injectClubId` (`rbacMiddleware.js`); services trust the header; `SECURITY_AND_ACCESS.md` | **Gold open (D7).** Overwritten only when the JWT has `clubId`, never stripped; readers are gated at the gateway. |

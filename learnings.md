@@ -42,15 +42,15 @@ Problems hit during development + how they were solved. Kept short for interview
 
 ---
 
-### 4. Catalog cache is real, but the "< 50ms hit" doc claim was aspirational, not measured
+### 4. Catalog cache is real and measurably faster, but cross-cloud latency dominates the absolute numbers
 
 **Finding:** Manually verified `GET /catalog`'s Valkey caching (see #1) by clearing the cache key, then timing a cold request followed by several warm ones, cross-checked against the catalog-service log lines (`Cache miss: querying MongoDB` → `Page 1 cached in Valkey for 60s` → `cache hit : serving page 1 from valkey`). The mechanism itself is correct and working exactly as designed.
 
-**Measured (3 rounds, local dev machine against Neon/Atlas/Upstash):** MISS ≈ 336ms avg, HIT ≈ 207ms avg — cache hits are consistently ~40% faster, but nowhere near the `< 50ms` cache-hit figure quoted in `PRD.md` / `FRONTEND_SPEC_DOCUMENT.md`.
+**Measured (3 rounds, local dev machine against Neon/Atlas/Upstash):** MISS ≈ 336ms avg, HIT ≈ 207ms avg — cache hits are consistently ~40% faster.
 
-**Why the gap:** both a hit and a miss still pay a network round-trip to a cloud service from a local machine — a hit just skips the *second* round-trip (to MongoDB Atlas) that a miss pays on top of the first (to Upstash). The absolute numbers here are dominated by cloud network latency, not by the actual cache-lookup cost, which is genuinely sub-millisecond. Co-located services (e.g. the project's planned Docker Compose deployment) would show a much sharper gap, since that network latency mostly drops out.
+**Why the gap:** both a hit and a miss still pay a network round-trip to a cloud service from a local machine — a hit just skips the *second* round-trip (to MongoDB Atlas) that a miss pays on top of the first (to Upstash). The absolute numbers here are dominated by cloud network latency, not by the actual cache-lookup cost, which is genuinely sub-millisecond. Services co-located with their data stores would show much lower absolute numbers, since that network latency mostly drops out. (The Docker Compose setup doesn't change this: it still talks to the same managed cloud data stores.)
 
-**Takeaway:** a caching layer can be implemented completely correctly and still miss a specific latency number quoted in planning docs, if that number assumed a deployment topology (co-located services) different from where it's actually being measured (local machine → multiple separate cloud regions). Verify performance claims against the actual measurement environment before citing them as fact.
+**Takeaway:** a caching layer can be implemented completely correctly and still show modest absolute numbers when the measurement environment (local machine → multiple separate cloud regions) adds network latency the cache can't remove. Always state the environment alongside a latency figure, and don't quote a latency number that hasn't been measured in the environment you're describing.
 
 ---
 

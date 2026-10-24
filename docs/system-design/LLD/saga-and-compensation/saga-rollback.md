@@ -4,7 +4,7 @@
 
 ## The problem it solves
 
-A checkout touches two databases that don't share a transaction: MongoDB (Catalog Service, stock) and PostgreSQL (Order Service, the order record). The code deliberately reserves stock in Mongo *first*, then evaluates payment, then inserts into Postgres. If payment fails (or any error happens) after the stock reservation succeeds, there's no 2PC to roll both back together — something has to explicitly tell Catalog Service "undo that reservation." That something is the compensating transaction. This is choreography, not orchestration: Order Service directly calls Catalog Service's rollback endpoint when it detects its own failure — there's no separate saga-coordinator service watching both and deciding what to undo.
+A checkout touches two databases that don't share a transaction: MongoDB (Catalog Service, stock) and PostgreSQL (Order Service, the order record). The code deliberately reserves stock in Mongo *first*, then evaluates payment, then inserts into Postgres. If payment fails (or any error happens) after the stock reservation succeeds, there's no 2PC to roll both back together — something has to explicitly tell Catalog Service "undo that reservation." That something is the compensating transaction. This is an **orchestrated saga with Order Service as the orchestrator**: Order Service drives every step itself (reserve, then commit or compensate) and directly calls Catalog Service's rollback endpoint when it detects its own failure. There's no *separate* coordinator service — the orchestrator lives inside Order Service — and no event-driven rollback: Catalog Service never decides on its own to undo anything.
 
 ## How it actually works
 
@@ -39,7 +39,10 @@ The retry loop (`compensateInventory.js`) tries up to 3 times with 100ms then 20
 ## What was rejected, and why
 
 - **Two-phase commit (2PC)** across Postgres and MongoDB was rejected in `docs/ADR.md` (ADR-005) for the standard reason: there's no shared transaction coordinator between a relational and a document database in this stack, and even where 2PC-like support exists, it trades away exactly the kind of loose coupling and independent scaling this project's whole microservices decision (ADR-001) was built around.
-- **Orchestration** (a dedicated saga-coordinator service that owns the whole "reserve, then commit or compensate" sequence) was implicitly rejected in favor of choreography — Order Service knows it needs to call Catalog Service's rollback endpoint itself, rather than a third service telling it to. This keeps the moving parts down to two services for a project this size, at the cost of the compensation logic living inside Order Service's own error handling rather than being centrally visible in one place.
+- **Choreography** (an event-driven saga, where Order Service would publish something like `PaymentFailed` and Catalog Service would react by undoing its own reservation) was rejected. With only two participants, keeping the whole sequence and its compensation logic in one place — Order Service — is simpler to follow, test, and debug than spreading the rollback across event handlers in two services.
+- **A dedicated saga-coordinator service** (a third service owning the "reserve, then commit or compensate" sequence) was also rejected: it would add a service, a deployment, and an extra network hop for a two-participant flow. The cost of keeping the orchestrator inside Order Service is that Order Service has to know Catalog Service's reserve/commit/rollback endpoints; if more participants were added, a choreographed saga or a separate coordinator would be worth revisiting.
+
+**How to say it in an interview:** "It's an orchestrated saga where Order Service is the orchestrator. I chose that over choreography because with only two participants, keeping the compensation logic in one place is simpler than an event-driven rollback."
 
 ## Honest limit
 

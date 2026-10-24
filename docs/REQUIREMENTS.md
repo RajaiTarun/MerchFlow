@@ -1,108 +1,161 @@
 # Requirements Specification: Centralized College Merchandise Management System
 
-**Document Version:** 1.0  
-**Target Architecture:** Microservices with Polyglot Persistence & Event-Driven Communication  
-**Estimated Sprint Timeline:** 7 to 9 Days (Prototype Scope)  
+**Document Version:** 2.0  
+**Status:** Describes the implemented system  
+**Architecture:** Microservices with Polyglot Persistence & Event-Driven Communication  
 **Primary Domain:** E-Commerce / Educational Technology  
+
+**Revision note (2026-10-24):** rewritten so every requirement matches what was built.
+- **Removed (never implemented):**
+  - the circuit breaker requirement
+  - exponential-backoff retries on all inter-service calls
+  - PostgreSQL row-level locking
+  - the Repository Pattern
+  - Command objects for cancelling orders or updating slots
+  - item editing
+  - real-time push
+  - the sprint timeline
+- **Corrected:**
+  - where requirements are enforced (e.g. idempotency lives in the Order Service, not the gateway)
+  - the payment status codes
+  - the catalog attribute model
+- **Added:** order history, club order management, delivery slots, and notification read state.
+- **Numbers:** no performance numbers appear here. Metrics are pending measurement; see the PRD, Section 4.
 
 ---
 
 ## 1. Executive Summary & Problem Statement
 
-Currently, college clubs manage merchandise sales in silos using disparate forms and size charts. As a result, students face repeated data entry, confusing sizing formats, and the absence of a unified catalog to view available items. Meanwhile, club managers lack a structured way to showcase items and manage orders.
+College clubs sell merchandise in silos, each with its own forms and size charts. Students re-enter the same details for every club, deal with inconsistent sizing, and have no single place to see what's available. Club managers have no structured way to showcase items or manage orders.
 
-The **Centralized College Merchandise Management System** acts as a unified portal solving these operational bottlenecks. To elevate this engineering prototype into an advanced backend system design showcase, the architecture replaces a monolithic MERN setup with decoupled microservices, polyglot databases, distributed concurrency controls, and fault-tolerant communication patterns.
+The **Centralized College Merchandise Management System** is a single portal that solves this. It also serves as a backend system design showcase: decoupled microservices, polyglot databases, distributed concurrency control, and compensating transactions, instead of a monolithic MERN setup.
 
 ---
 
 ## 2. Stakeholders & User Personas
 
-- **The Student:** Wants a streamlined purchasing experience where they can browse all college club merchandise in one portal, save their preferred sizing profile once, and securely purchase limited-edition drops without system crashes.
-- **The Club Administrator:** Needs a structured dashboard to publish merchandise items with varying attributes, set strict inventory limits, and manage student orders efficiently.
-- **The System Administrator (Super Admin):** Acts as the universal controller of the entire platform with full system-wide permissions. Has the authority to look up any registered user by email, promote a user to `CLUB_ADMIN`, and create new clubs — assigning each new club's admin in the same action. Also retains every permission a Club Admin or Student has (including placing orders).
-
-
+- **The Student:** browses all club merchandise in one place, saves a size profile once, places orders, and follows their orders and notifications.
+- **The Club Administrator:** publishes merchandise for their own club, schedules delivery slots, views their club's orders, and marks them delivered. Can also place orders.
+- **The System Administrator (Super Admin):** has platform-wide permissions. Looks up any registered user by email, promotes a user to `CLUB_ADMIN`, and creates new clubs while assigning each club's admin in the same action. Can do anything a Club Admin can, for any club (naming the club explicitly), and can place orders.
 
 ---
 
 ## 3. Functional Requirements (FRs)
 
 ### FR1: User & Authentication Service
-* **FR1.1 — Domain-Restricted Registration:** The system must restrict account registration strictly to users possessing a valid university email address matching the format `firstname.lastname@students.iiit.ac.in`.
-* **FR1.2 — Authentication Strategy:** The system must authenticate users via an email and hashed password mechanism, issuing JSON Web Tokens (JWT) through an API Gateway for session management.
-* **FR1.3 — Saved Size Profile:** Authenticated students must be able to create and update a preferred global size profile (e.g., S, M, L, XL) stored in a relational database.
-* **FR1.4 — Role-Based Access Control (RBAC):** The system must enforce RBAC to differentiate system permissions between standard Student accounts and authorized Club Admin accounts.
-* **FR1.5 — Builder Pattern Integration:** The system must utilize the Builder Pattern for the step-by-step construction of complex student profile objects containing attributes such as name, contact details, address, and saved sizes.
+* **FR1.1 — Domain-Restricted Registration:** Registration accepts only emails matching `^[a-zA-Z0-9._%+-]+@students\.iiit\.ac\.in$`. Any other address is rejected with `403`; a duplicate email is rejected with `409`.
+* **FR1.2 — Authentication:** Users log in with email and password. Passwords are stored as bcrypt hashes. On login the User Service issues a signed JWT with a 1-hour expiry, carrying the user id, email, role, and club id. The API Gateway verifies the JWT on every protected route.
+* **FR1.3 — Saved Profile:** An authenticated user can save and update a profile: full name, phone, hostel block, and preferred size (`S`, `M`, `L`, `XL`, `XXL`). They can update the size on its own. A user can read and update only their own profile; their identity always comes from the verified JWT, never from the request.
+* **FR1.4 — Role-Based Access Control:** Three roles are enforced: `STUDENT`, `CLUB_ADMIN` (scoped to one club), and `SUPER_ADMIN`. Permissions per endpoint are listed in `SECURITY_AND_ACCESS.md`.
+* **FR1.5 — Builder Pattern:** Student profiles are assembled step by step with a Builder (`StudentProfileBuilder`).
 
 ### FR2: Merchandise Catalog Service
-* **FR2.1 — Merchandise Publishing:** Club Administrators must be able to create, list, and update merchandise listings through a dedicated management interface.
-* **FR2.2 — Flexible Attribute Support:** The catalog must support dynamic, varying item attributes (e.g., size and color for apparel; volume for mugs; paper type for notebooks) without schema constraints.
-* **FR2.3 — Unified Browsing Feed:** Students must be able to browse and compare available merchandise from multiple clubs through a single, unified catalog feed.
-* **FR2.4 — Factory Pattern Integration:** The service must implement the Factory Pattern via a centralized creation method to instantiate distinct merchandise objects (e.g., T-shirts, hoodies, caps, mugs) without direct object instantiation across the codebase.
+* **FR2.1 — Merchandise Publishing:** A Club Admin can publish items for their own club. A Super Admin can publish for any club by naming it, and the club is validated against the clubs table. Items can't be edited or deleted after publishing, except for their delivery slot (FR2.5).
+* **FR2.2 — Type-Specific Attributes:** Every item has a name, description, price, stock, club, and type. Size support depends on the type:
+  * `APPAREL` must list at least one available size.
+  * `ACCESSORY` may list sizes.
+  * `MUG` has none.
+
+  Items are stored as MongoDB documents, so each type can carry its own fields without a relational EAV schema.
+* **FR2.3 — Unified Browsing Feed:** Authenticated users can browse items from all clubs in one feed. It is ordered newest-first, uses cursor-based pagination, and can be filtered by type and club.
+* **FR2.4 — Factory Pattern:** Items are instantiated through one factory (`MerchandiseFactory`), which returns the matching `Apparel`, `Mug`, or `Accessory` object and validates it.
+* **FR2.5 — Delivery Slots:** A Club Admin can set a delivery date and time window on their own club's items; a Super Admin can do this for any item. Each update notifies the students who ordered that item (FR4.1).
 
 ### FR3: Order & Checkout Service
-* **FR3.1 — Automated Size Injection:** When placing an order, the system must automatically fetch and apply the student’s pre-saved size profile to streamline checkout.**Out-of-Stock Fallback:** If the student's pre-saved preferred size is currently out of stock, not offered for that specific merchandise item, or unreleased, the system must gracefully intercept the automated selection, display a notification regarding size unavailability, and prompt the user to manually select from the remaining available sizes before allowing checkout progression.
-* **FR3.2 — Checkout Idempotency:** The checkout API must require an `Idempotency-Key` in the request header to guarantee that network lag or duplicate button clicks result in only a single processed order and payment charge.
-* **FR3.3 — Command Pattern Integration:** The system must implement the Command Pattern to encapsulate actions such as placing an order, canceling an order, or updating delivery slots as discrete command objects.
-* **FR3.4 — Simulated Payment Gateway (Magic Values):** The checkout flow must integrate a mock payment service utilizing specific card number input rules ("Magic Values") to deterministically test transaction states:
+* **FR3.1 — Automatic Size Selection with Fallback:** At checkout, the Order Service fetches the student's saved preferred size and the item's available sizes.
+  * If the item has no sizes, the order carries no size.
+  * If the preferred size is offered, it is applied automatically.
+  * If it isn't offered, or no preferred size is saved, checkout stops with `400` and returns the available sizes. The frontend lets the student pick one and resubmit; a picked size that isn't offered is rejected.
+  * Sizes are offered per item. Stock is a single counter per item.
+* **FR3.2 — Checkout Idempotency:** Checkout requires an `Idempotency-Key` header. The Order Service guarantees that duplicate submissions produce at most one order:
+  * a retry after success returns the original response;
+  * a duplicate sent while the first is in progress is rejected with `409`;
+  * a failed checkout clears the key so it can be retried.
+* **FR3.3 — Command Pattern:** A checkout is encapsulated as a single `OrderCommand` object. It validates its own fields and carries everything needed to create the order.
+* **FR3.4 — Simulated Payment (Magic Values):** A mock card number decides the outcome deterministically:
 
-| Input Field (Mock Card) | Triggered System State | Expected Backend Action |
+| Mock Card Input | Result | Expected Backend Action |
 | :--- | :--- | :--- |
-| `4242` | `200 OK` (Payment Success) | Commit order to database, permanently deduct inventory, and publish `OrderPlaced` event. |
-| `4000` (or blank) | `400 Bad Request` (Payment Failure) | Abort order creation, trigger compensating Saga rollback, and release Valkey inventory lock. |
+| `4242` | `201 Created` | Save the order with status `COMMITTED`, commit the stock reservation, and publish `OrderPlaced`. |
+| Any other value (e.g. `4000`, or blank) | `400 PAYMENT_FAILED` | Save no order, run the compensating rollback of the reserved stock, and release the inventory lock. |
+
+* **FR3.5 — Order History:** A student can list their own orders and view the detail of any single order of theirs, and no one else's.
+* **FR3.6 — Club Order Management:** A Club Admin can list their own club's orders, including the student's email, item name, size, quantity, and status. They can mark one of those orders `DELIVERED`, which notifies the student. A Super Admin can do both for any club. `DELIVERED` is the only status an admin can set; order cancellation is not supported.
 
 ### FR4: Notification Service
-* **FR4.1 — Asynchronous Delivery Updates:** Upon successful order placement, the system must asynchronously generate real-time updates regarding upcoming campus delivery and distribution time slots.
-* **FR4.2 — Observer Pattern Integration:** The system must use the Observer Pattern so that all subscribed students automatically receive notifications when order confirmations or distribution schedule announcements occur.
-* **FR4.3 — Strategy Pattern for Channels:** The service must implement the Strategy Pattern (`NotificationStrategy`), keeping initial sprint delivery restricted to an `InAppNotificationStrategy` while ensuring adherence to the Open/Closed Principle for future `EmailStrategy` or `WhatsAppStrategy` integration.
+* **FR4.1 — Asynchronous In-App Notifications:** Notifications are generated asynchronously from events:
+  * an order is placed
+  * an order is marked delivered
+  * a delivery slot is set or changed on an item; every student who ordered that item is notified
+* **FR4.2 — Observer Pattern:** Incoming events go to a broadcaster, which notifies every registered delivery strategy without knowing how each one delivers.
+* **FR4.3 — Strategy Pattern for Channels:** Each delivery channel implements `NotificationStrategy`. The system ships with `InAppNotificationStrategy` only. Future channels (email, WhatsApp) are added as new strategies without changing existing code.
+* **FR4.4 — Viewing and Read State:** A user can list their own notifications and mark them as read. The frontend refreshes the list by polling; there is no real-time push.
 
 ### FR5: Super Admin Administration
+Application-level administration only. There is no infrastructure diagnostics capability (service health aggregation, connection-pool or queue monitoring).
 
-A basic, functional administration capability for the Super Admin — application-level administration only. This explicitly does **not** include infrastructure diagnostics (circuit-breaker status, aggregated microservice health, database connection-pool or message-queue monitoring); an earlier revision of this specification included that scope and it has been removed.
-
-* **FR5.1 — User Lookup by Email:** The Super Admin must be able to find an existing user by their exact email address and view their basic, non-sensitive account details (name, current role, current club). This is a minimal exact-match lookup, not a searchable/paginated user directory.
-* **FR5.2 — Role Promotion to Club Admin:** The Super Admin must be able to promote an existing user (identified via FR5.1) to `CLUB_ADMIN`. A user already assigned to a club must be demoted before being promoted to administer a different one.
-* **FR5.3 — Club Creation with Admin Assignment:** The Super Admin must be able to create a new club, identifying its Club Admin by email in the same request. Club creation and admin assignment must be transactional — if either step fails, neither is committed. Clubs are therefore not permanently fixed/pre-seeded data.
+* **FR5.1 — User Lookup by Email:** The Super Admin can find an existing user by exact email and see their basic, non-sensitive details (name, current role, current club). This is an exact-match lookup, not a searchable or paginated directory.
+* **FR5.2 — Role Promotion to Club Admin:** The Super Admin can promote an existing user to `CLUB_ADMIN` for an existing club. A user already assigned to a club must be demoted before being promoted to administer a different one.
+* **FR5.3 — Club Creation with Admin Assignment:** The Super Admin can create a club and name its Club Admin by email in the same request.
+  * Creation and assignment happen in one transaction: if either step fails, neither is saved.
+  * A Super Admin can't be assigned as a club's admin, and neither can a user who already belongs to a club.
 
 ---
 
 ## 4. Non-Functional Requirements (NFRs)
 
-### NFR1: Concurrency & Data Integrity (The "Flash Sale" Requirement)
-* **NFR1.1 — Zero Overselling Guarantee:** The system must guarantee that merchandise inventory is never oversold during high-traffic "flash sale" drops (e.g., 500 students simultaneously attempting to purchase 50 limited-edition hoodies).
-* **NFR1.2 — Distributed Locking:** The system must implement Distributed Locks using Valkey to isolate item inventory IDs, ensuring only one concurrent thread can execute stock modifications at any given millisecond.
-* **NFR1.3 — Database-Level Locking:** For relational transactions, the system must support explicit locking strategies (e.g., Pessimistic / Optimistic locking via native MVCC and row-level locking in PostgreSQL) to queue high-contention checkout requests predictably.
-* **NFR1.4 — ACID Compliance:** All order creation, user profile modifications, and financial transaction records must adhere strictly to ACID properties.
+### NFR1: Concurrency & Data Integrity
+* **NFR1.1 — No Overselling:** Stock must never be oversold, even when many students check out the same limited item at once. The mechanism is in place (NFR1.2, NFR1.3). Verifying it under real concurrent load is pending, along with the other metrics.
+* **NFR1.2 — Distributed Locking:** Each checkout takes a per-item lock in Valkey before touching stock.
+  * The lock has an expiry, so a crashed request can't hold it forever.
+  * It is released only by its owner (a token check inside a Lua script), in a `finally` block.
+  * A checkout that can't get the lock is rejected with `409` instead of waiting.
+* **NFR1.3 — Atomic Stock Decrement:** Stock is reserved with a single conditional update in MongoDB that succeeds only while stock covers the requested quantity. Insufficient stock is rejected with `409`.
+* **NFR1.4 — Transactions:**
+  * Stock reservations, rollbacks, and their bookkeeping records run in MongoDB transactions.
+  * Club creation with admin assignment runs in a PostgreSQL transaction.
+  * Orders are written to PostgreSQL only after payment succeeds.
 
 ### NFR2: Distributed System Resilience
-* **NFR2.1 — Distributed Transactions (Saga Pattern):** The system must implement the Saga Pattern across the Order and Catalog microservices. If an inventory hold succeeds in the Catalog Service but payment processing fails in the Order Service, the system must automatically execute a compensating transaction to restore catalog inventory.
-* **NFR2.2 — Fault Isolation (Circuit Breaker Pattern):** The Notification Service must implement the Circuit Breaker Pattern using a circuit-breaking library (such as Opossum in Node.js). If simulated external messaging APIs fail continuously, the circuit must trip to open, failing fast to prevent thread exhaustion and cascading system crashes.
-* **NFR2.3 — Transient Error Handling:** All inter-service network communication and external API calls must implement a Retry Pattern utilizing exponential backoff for handling temporary network instability.
-* **NFR2.4 — Service Discovery & Health Monitoring:** All microservices and the API Gateway must expose dedicated `/health` endpoints to allow load balancers and orchestrators to execute heartbeat monitoring and node liveness checks.
+* **NFR2.1 — Saga Compensation:** If stock is reserved but payment fails, the Order Service automatically runs a compensating transaction that restores the reserved quantity. The rollback is idempotent: a compensation record prevents stock from being restored twice.
+* **NFR2.2 — Bounded Retries:** Two operations retry with a short linear backoff (3 attempts, 100 ms then 200 ms):
+  * the compensation call from the Order Service to the Catalog Service;
+  * the in-app notification write to PostgreSQL.
+
+  There is no general retry layer for other inter-service calls, and no circuit breaker.
+* **NFR2.3 — Health Endpoints:** The API Gateway and all four backend services expose `/health`. The backend endpoints sit behind the internal service key, like every other backend route.
 
 ### NFR3: Performance & Scalability
-* **NFR3.1 — In-Memory Catalog Caching:** The system must utilize Valkey as an in-memory caching layer to serve the first page of merchandise catalog results, significantly reducing read query overhead on the primary database during traffic spikes.
-* **NFR3.2 — Cursor-Based Pagination:** The Merchandise Catalog Service must implement cursor-based pagination for catalog browsing instead of standard offset pagination to eliminate performance degradation over large datasets.
-* **NFR3.3 — Database Connection Pooling:** The relational data layer must utilize connection pooling (e.g., `pg-pool` for PostgreSQL) to minimize connection overhead and efficiently manage thread counts under load.
-* **NFR3.4 — Asynchronous Event Decoupling:** Cross-service communication for non-blocking operations (such as triggering delivery notifications) must be fully decoupled using a Publish–Subscribe Pattern backed by a message broker (RabbitMQ), ensuring checkout API latency is unaffected by notification processing.
+* **NFR3.1 — Catalog Caching:** The unfiltered first page of the catalog feed is cached in Valkey with a short expiry. It is invalidated whenever an item is created, a delivery slot changes, or stock changes. If Valkey is unavailable, the feed falls back to MongoDB.
+* **NFR3.2 — Cursor-Based Pagination:** The catalog feed uses cursor-based pagination, not offset pagination.
+* **NFR3.3 — Connection Pooling:** Every service that talks to PostgreSQL uses a connection pool (the `pg` library's `Pool`).
+* **NFR3.4 — Asynchronous Event Decoupling:** Notifications are triggered through a RabbitMQ topic exchange (publish–subscribe). Publishing is fire-and-forget, so checkout never waits on the broker or the Notification Service.
 
 ### NFR4: Maintainability & Architecture
-* **NFR4.1 — Microservices Modularity:** The application layer must be divided into distinct, independently deployable microservices based on business domains: API Gateway, User/Auth Service, Catalog Service, Order Service, and Notification Service.
-* **NFR4.2 — Polyglot Persistence Strategy:** The data layer must implement polyglot persistence to match database engines to specific data characteristics:
-  * **PostgreSQL:** Used for Users, Clubs, and Orders to ensure strict relational schema integrity and ACID compliance.
-  * **MongoDB:** Used for the Merchandise Catalog to support flexible, unstructured JSON document schemas for varying product attributes without Entity-Attribute-Value (EAV) overhead.
-* **NFR4.3 — Repository Pattern Integration:** Database operations across all services must be abstracted using the Repository Pattern, providing dedicated repositories for entities (users, orders, items, notifications) to simplify maintenance and testing.
+* **NFR4.1 — Microservices Modularity:** The application is split into independently deployable services by business domain: API Gateway, User Service, Catalog Service, Order Service, and Notification Service. Each has its own `Dockerfile`.
+* **NFR4.2 — Polyglot Persistence:**
+  * **PostgreSQL:** users, clubs, orders, and notifications, for relational integrity and transactions. All services that use PostgreSQL share one managed instance.
+  * **MongoDB:** catalog items, stock reservations, and compensation records, for flexible per-type documents.
+* **NFR4.3 — Design Patterns:** Builder (profiles), Factory (catalog items), Command (checkout), Observer (notification broadcaster), and Strategy (notification channels).
+
+### NFR5: Security
+* **NFR5.1:** Authentication, authorization, rate limiting, service-to-service trust, and known gaps are specified in `SECURITY_AND_ACCESS.md`.
 
 ---
 
-## 5. Prototype Scope & System Boundaries (7–9 Day Sprint)
+## 5. Scope & System Boundaries
 
-To ensure successful delivery of the distributed systems architecture within the 7 to 9-day development constraint while keeping daily debugging frictionless, the following two-phase execution boundaries are established:
+### Built
+* The five services above, plus a React single-page frontend with 12 pages across the three roles.
+* Managed cloud data stores: PostgreSQL (Neon), MongoDB Atlas, Valkey (Upstash), and RabbitMQ (CloudAMQP).
+* Two ways to run locally: `npm run dev` (all backend services via npm workspaces and `concurrently`), or `docker compose up --build` (all services plus the frontend). Both use the same managed data stores.
+* Deployment on Render's free tier from a single `render.yaml` blueprint.
 
-### Included in Sprint Scope
-
-* **Phase 1: Modular Local Development & Cloud Persistence:** Development and testing of all 5 independent microservices locally using Node.js port processes (orchestrated via `concurrently`). The data layer connects directly to free serverless cloud database endpoints (Neon/Supabase PostgreSQL, MongoDB Atlas, Upstash Valkey, and CloudAMQP RabbitMQ) to eliminate local OS memory overhead during logic development.
-* **Phase 2: Final Docker Containerization Polish:** Once end-to-end distributed flows are verified, the entire 5-service architecture is containerized using individual `Dockerfile`s and orchestrated via a single root `docker-compose.yml` file for production-ready deployment and portfolio presentation.
-* **Core Microservices & Routing:** Fully functional Node.js/Express API Gateway (with JWT auth and rate limiting), User Service, Catalog Service, Order Service, and Notification Service running on isolated, modular service boundaries.
-* **End-to-End Concurrency & Resilience Flows:** Demonstration of Valkey distributed locking during simulated flash sales, Saga compensating transactions on checkout failures, and RabbitMQ event publication.
-* **Lightweight Demonstration UI:** Bare-bones React frontend solely engineered to trigger backend APIs and demonstrate the three end-to-end user journeys: browsing, ordering with saved sizes, and viewing in-app delivery notifications.
+### Not built (out of scope)
+* Circuit breaker or general retry layer; external notification channels (email, SMS, WhatsApp).
+* Real-time push (WebSockets/SSE).
+* A real payment gateway.
+* Editing or deleting items, deleting clubs, and cancelling orders.
+* Per-size stock.
+* A searchable user directory, or infrastructure diagnostics.
+* Load testing and measured metrics (pending).

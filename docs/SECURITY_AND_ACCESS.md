@@ -1,23 +1,38 @@
-# Security & Access Specification: Lean Sprint Edition
+# Security & Access Specification
 
 **Project:** Centralized College Merchandise Management System
 
-**Document Version:** 2.0 (Simplified Sprint Focus)
+**Document Version:** 3.0
 
-**Status:** Approved for Engineering Sprint
+**Status:** Describes the implemented system
 
-**Target Architecture:** Decoupled Microservices with Private Docker Networking
+**Architecture:** Microservices behind an API Gateway; Docker Compose for local runs, Render (free tier) for deployment
+
+**Revision note (2026-10-24):** rewritten to match the code.
+- **Removed (never true of the built system):**
+  - private-network isolation of backend services and databases
+  - NoSQL sanitization middleware (`express-mongo-sanitize` was removed, see `learnings.md` #2)
+  - idempotency and registration checks "at the gateway" (they live in the Order and User services)
+  - the 100 and 5 requests/minute limits (not what is configured)
+  - the earlier diagnostics-panel history
+- **Added:**
+  - how identity reaches downstream services
+  - the full endpoint permission table
+  - how deployment actually works on Render
+  - a list of known gaps
 
 ---
 
 ## 1. Core Security Strategy
 
-Instead of complex enterprise compliance frameworks, the security architecture focuses on **four practical engineering pillars** engineered to protect a campus merchandise platform during high-concurrency flash sales:
+The platform relies on four practical controls instead of an enterprise compliance framework:
 
-1. **Domain-Restricted Onboarding:** Gating access to university students without email verification overhead.
-2. **Stateless Authentication & Role Control:** Lightweight JWTs with strict tenant-scoped permissions.
-3. **High-Concurrency Abuse Prevention:** Valkey-backed rate limiting and transaction idempotency.
-4. **Network & Database Isolation:** Securing cloud database connections via encrypted TLS/SSL during Phase 1 development and isolating internal microservices behind a zero-trust private Docker bridge network during Phase 2 containerized deployment.
+1. **Domain-restricted onboarding:** only `@students.iiit.ac.in` addresses can register.
+2. **Stateless authentication and role control:** short-lived JWTs, three roles, and Club Admins scoped to their own club.
+3. **Abuse prevention:** Valkey-backed rate limiting at the gateway, and checkout idempotency in the Order Service.
+4. **Service-to-service trust:**
+   - Every backend service accepts only requests carrying a shared internal key. This is the boundary, not network isolation.
+   - Connections to the managed data stores go over TLS.
 
 ---
 
@@ -25,120 +40,168 @@ Instead of complex enterprise compliance frameworks, the security architecture f
 
 ### 2.1 Domain-Gated Registration (`@students.iiit.ac.in`)
 
-To eliminate the engineering overhead of sending email verification links or OTPs, account creation is gated at the API Gateway via strict regex matching:
+Account creation is restricted by email domain instead of email verification links or OTPs. The check runs in the User Service's registration route:
 
 * **Regex Rule:** `^[a-zA-Z0-9._%+-]+@students\.iiit\.ac\.in$`
-* **Enforcement:** Registration attempts using external domains (`@gmail.com`) or invalid subdomains are rejected immediately with an HTTP `403 Forbidden` before querying the database.
+* **Enforcement:**
+  * Any other domain (e.g. `@gmail.com`) or subdomain is rejected with `403 Forbidden`, before the database is queried.
+  * Missing fields return `400`.
+  * An already-registered email returns `409`.
 
-### 2.2 Password Security (Bcrypt)
+### 2.2 Password Security (bcrypt)
 
-* User passwords are hashed using **bcrypt** (with `salt rounds = 12`) in the User Service before saving to PostgreSQL.
-* This provides computationally intensive, adaptive protection against rainbow tables and brute-force attacks without requiring heavy memory tuning.
+* Passwords are hashed with **bcrypt** (salt rounds = 12) in the User Service before they are stored in PostgreSQL. Login compares against the hash; plaintext passwords are never stored.
 
 ### 2.3 Stateless Session Management (JWT)
 
-The API Gateway handles user login and issues a signed JSON Web Token (JWT) with a **1-hour TTL**. Downstream microservices authenticate requests statelessly by reading the JWT claims:
+On successful login, the **User Service** issues a JWT signed with the shared `JWT_SECRET`, with a **1-hour expiry**:
 
 ```json
 {
-  "sub": "usr_987654321",
+  "sub": "<user uuid>",
   "email": "aarav.sharma@students.iiit.ac.in",
   "role": "CLUB_ADMIN",
-  "clubId": "club_tech_01"
+  "clubId": "<club uuid, or null for users without a club>"
 }
-
 ```
 
-### 2.4 Role-Based Access Control (RBAC) & Tenant Isolation
+* **Verification:** the **API Gateway** verifies the token (signature and expiry) on every protected route. A missing, invalid, or expired token returns `401`.
+* **How identity reaches downstream services:** backend services do not re-verify the token; they rely on the gateway having done so. They learn the caller's identity in two ways:
+  * **Gateway-set headers, derived from the verified JWT:**
+    * `x-user-id`, set on the profile routes;
+    * `x-user-role`, set on all catalog and order routes;
+    * `x-club-id`, set on all catalog and order routes when the user has a club.
+  * **Decoding the forwarded `Authorization` header** without re-verifying it. The Order Service and Notification Service do this to read the user id.
+* **Why trusting these is acceptable:** backend services only accept requests that carry the internal service key (§4.2), which only the gateway and other backend services hold.
 
-Access routes are strictly gated by three operational tiers. Furthermore, **Club Admins are strictly tenant-isolated**: if an admin from the "Tech Club" (`clubId: club_tech_01`) attempts to modify inventory or broadcast notifications for the "Sports Club," the request is denied with an HTTP `403 Forbidden`.
+### 2.4 Role-Based Access Control (RBAC) & Club Scoping
+
+There are three roles: `STUDENT`, `CLUB_ADMIN` and `SUPER_ADMIN`. Club scoping is enforced in two layers:
+* the gateway's role checks decide **whether** a role may use a route at all;
+* the owning service decides **which club's data** a Club Admin may touch, by comparing the resource's club with the gateway-set `x-club-id`. A Club Admin acting on another club's item or order gets `403 Forbidden`.
 
 | Action / Endpoint | Student | Club Admin | Super Admin |
 | --- | --- | --- | --- |
-| **Browse Catalog** (`GET /api/v1/catalog`) | ✅ Allow | ✅ Allow | ✅ Allow |
-| **Manage Saved Size Profile** (`PUT /api/v1/users/profile`) | ✅ Allow (Own) | ✅ Allow (Own) | ✅ Allow (Own) |
-| **Execute Checkout** (`POST /api/v1/orders`) | ✅ Allow | ✅ Allow | ✅ Allow |
-| **Manage Merchandise & Caps** (`POST /api/v1/catalog`) | ❌ Deny | ✅ Allow (Own Club) | ✅ Allow (Any Club) |
-| **Broadcast Delivery Slots** (`PUT /api/v1/catalog/:id/delivery-slot`) | ❌ Deny | ✅ Allow (Own Club) | ✅ Allow (Any Club) |
-| **Look Up a User by Email** (`GET /api/v1/users/lookup?email=`) | ❌ Deny | ❌ Deny | ✅ Allow |
-| **Promote a User to Club Admin** (`PUT /api/v1/users/:userId/role`) | ❌ Deny | ❌ Deny | ✅ Allow |
-| **Create a Club (+ assign its Club Admin)** (`POST /api/v1/clubs`) | ❌ Deny | ❌ Deny | ✅ Allow |
+| **Register / Log in** (`POST /api/v1/users/register`, `POST /api/v1/users/login`) | ✅ Public | ✅ Public | ✅ Public |
+| **Manage own profile** (`PUT /api/v1/users/profile`, `PUT /api/v1/users/size`, `GET /api/v1/users/profile/:userId`) | ✅ Own only | ✅ Own only | ✅ Own only |
+| **Browse catalog** (`GET /api/v1/catalog`, `GET /api/v1/catalog/:id`) | ✅ Allow | ✅ Allow | ✅ Allow |
+| **List clubs** (`GET /api/v1/clubs`) | ✅ Allow | ✅ Allow | ✅ Allow |
+| **Checkout** (`POST /api/v1/orders`) | ✅ Allow | ✅ Allow | ✅ Allow |
+| **Own orders** (`GET /api/v1/orders`, `GET /api/v1/orders/:id`) | ✅ Own only | ✅ Own only | ✅ Own only |
+| **Own notifications** (`GET /api/v1/notifications`, `PATCH /api/v1/notifications/:id/read`) | ✅ Own only | ✅ Own only | ✅ Own only |
+| **Publish an item** (`POST /api/v1/catalog`) | ❌ Deny | ✅ Own club | ✅ Any club (must name it) |
+| **Set a delivery slot** (`PUT /api/v1/catalog/:id/delivery-slot`) | ❌ Deny | ✅ Own club's items | ✅ Any item |
+| **View club orders** (`GET /api/v1/orders/club`) | ❌ Deny | ✅ Own club | ✅ Any club (`?clubId=`) |
+| **Mark an order delivered** (`PATCH /api/v1/orders/:orderId/status`) | ❌ Deny | ✅ Own club's orders | ✅ Any order |
+| **Look up a user by email** (`GET /api/v1/users/lookup?email=`) | ❌ Deny | ❌ Deny | ✅ Allow |
+| **Change a user's role** (`PUT /api/v1/users/:userId/role`) | ❌ Deny | ❌ Deny | ✅ Allow |
+| **Create a club and assign its admin** (`POST /api/v1/clubs`) | ❌ Deny | ❌ Deny | ✅ Allow |
 
-**Revision note (2026-09-11):** this table previously denied Club Admin/Super Admin checkout and listed a `GET /health/detailed` "Manage Clubs & System Health" capability. Neither reflected the finalized project scope: **Club Admin and Super Admin are explicitly allowed to place orders** like any other authenticated user (there is no `STUDENT`-only checkout restriction, by design), and there is **no infrastructure-diagnostics endpoint** (`/health/detailed`, service-health aggregation, circuit-breaker status, or queue-depth monitoring) anywhere in this system — that capability was replaced with concrete application-level Super Admin actions: looking up a user by email, promoting a user to `CLUB_ADMIN`, and creating a club while assigning its admin. See §5 below for the endpoints these three rows correspond to.
+* **Checkout:** every role may check out. There is no student-only restriction, by design.
+* **Ownership:** "own only" rows take the caller's identity from the JWT, never from the URL or body. A request for someone else's order or notification returns `404` or `403`.
+* **Scope of this table:** it describes the access model the gateway's role checks and the services' ownership checks implement on these routes.
 
 ---
 
-## 3. Flash Sale Threat Mitigation (Gateway Defense)
+## 3. Gateway Defenses
 
 ```
 [Public Internet / Users]
            │
-           ▼ (Port 3000 exposed)
-┌────────────────────────────────────────────────────────┐
-│                   EXPRESS API GATEWAY                  │
-│  ├── 1. Rate Limiting (Valkey Token Bucket)            │
-│  ├── 2. Replay Defense (Valkey Idempotency Key)        │
-│  └── 3. Sanitization (Parameterized SQL + NoSQLi Strip)│
-└────────────────────────────────────────────────────────┘
-           │ (Private Docker Bridge Network - Hidden)
+           ▼  (HTTPS; the only entry point the frontend uses)
+┌──────────────────────────────────────────────────────────┐
+│                    EXPRESS API GATEWAY                   │
+│  ├── 1. JWT verification (protected routes)              │
+│  ├── 2. Role checks (scoped to specific routes)          │
+│  ├── 3. Rate limiting (Valkey, catalog + orders routes)  │
+│  └── 4. Identity headers + internal service key added    │
+└──────────────────────────────────────────────────────────┘
+           │  (internal key on every proxied request)
            ▼
 [User Service]   [Catalog Service]   [Order Service]   [Notification Service]
-
 ```
 
-### 3.1 Rate Limiting (Valkey Token Bucket)
+### 3.1 Rate Limiting (Valkey)
 
-To prevent scraping bots or checkout spam during a limited-edition hoodie drop, the API Gateway tracks request counts in Valkey:
+* **What is limited:** all requests under `/api/v1/catalog` and `/api/v1/orders`. User, club, and notification routes are not rate-limited.
+* **Keying:** a separate counter per route group per client IP (`rate_limit:{catalog|orders}:{ip}`).
+* **Mechanism:** a Lua script runs the read-and-decrement atomically in Valkey, and every path through it guarantees the key has an expiry, so a bucket can't get stuck. In practice this is a fixed-window counter: the full allowance comes back when the key expires. The code and `docs/system-design/LLD/rate-limiting/token-bucket-limiter.md` call it a token bucket.
+* **Current configuration:** 1000 requests per 60 seconds for each route group, set in `services/api-gateway/middleware/rateLimiter.js`. Inline comments there record the originally intended values (`// 100` for catalog, `// 5` for orders). Tightening them is a one-line change per route.
+* **When exceeded:** the gateway returns `429 Too Many Requests`.
 
-* **Catalog Browsing (`GET`):** Max **100 requests / min** per IP.
-* **Order Checkout (`POST`):** Max **5 checkout attempts / min** per JWT.
-* Exceeding these limits triggers an immediate HTTP `429 Too Many Requests` response.
+### 3.2 Double-Submit Protection (Idempotency)
 
-**Revision note (2026-09-14):** the limiter's mechanism (atomic Lua script, per-route-per-IP keying, self-healing TTL — see `docs/system-design/LLD/rate-limiting/token-bucket-limiter.md`) is implemented and verified. The specific thresholds above are the originally *intended* values (also left as inline comments — `// 100`, `// 5` — next to the code that superseded them), but the constants actually configured right now in `services/api-gateway/middleware/rateLimiter.js` are **1000 requests/min for both routes**, not 100 and 5. `learnings.md` #9's own concurrency verification explicitly tested against "a fresh bucket (limit 1000)," confirming this is the value in effect during development, not a stray leftover — most plausibly loosened to avoid tripping the limiter while iterating, though that specific motive isn't confirmed anywhere in the codebase itself. Tightening the two constants back to 100/5 before any real demo or deployment is a one-line change per route, not a mechanism change.
+Checkout idempotency is enforced by the **Order Service**, not the gateway:
 
-### 3.2 Double-Charge Protection (Idempotency)
+* **The header:** every checkout must include an `Idempotency-Key` header (a UUID); without it the request is rejected with `400`.
+* **The record:** the key is stored in Valkey as `idempotency:order:{key}`. It is first set to `PROCESSING` with `SET NX`, so two concurrent duplicates can't both claim it. On success it is replaced with `SUCCESS` plus the cached response, kept for 24 hours.
+* **Duplicates:**
+  * a repeat after success returns the cached response (`200`) without placing a second order;
+  * a repeat while the first is still processing returns `409`;
+  * if checkout fails, the key is cleared so the client can retry.
+* **Valkey unavailable:** checkout returns `503` rather than proceeding without protection.
 
-To prevent network lag or accidental double-clicks from charging a student twice:
+### 3.3 Injection Defense
 
-* The checkout payload must include an `Idempotency-Key` (UUIDv4) in the HTTP headers.
-* The API Gateway checks Valkey (`GET idempotency:order:{key}`). If the key exists, the request is blocked and the cached result is returned. If not, the transaction proceeds to the Order Service.
-
-### 3.3 Database Injection Defense
-
-* **SQL Injection (Postgres):** All database queries in the User and Order services strictly use **Parameterized Queries / Prepared Statements** via `pg-pool`, treating user inputs strictly as safe data literals.
-* **NoSQL Injection (MongoDB):** The Catalog Service uses middleware (`express-mongo-sanitize`) to strip MongoDB query operators (`$`, `.`) from payloads, preventing query logic overriding.
+* **SQL injection (PostgreSQL):** every query in the User, Order, Notification, and Catalog services uses parameterized queries through the `pg` library (`$1, $2, …` placeholders). No SQL is built by string interpolation of request data.
+* **NoSQL injection (MongoDB):** there is no dedicated sanitization middleware; `express-mongo-sanitize` was removed because it never ran on real routes (`learnings.md` #2). Current protections:
+  * **Query strings:** Express 5's default "simple" query parser doesn't build nested objects, so operator payloads such as `?clubId[$ne]=x` can't reach a Mongo filter through the query string.
+  * **Request bodies:** these are validated before use. Examples: item fields go through the domain constructors (via `MerchandiseFactory`), and stock quantities must be positive integers.
 
 ---
 
-## 4. Network Isolation & Inter-Service Security
+## 4. Network & Inter-Service Security
 
-### 4.1 Two-Phase Network Isolation Strategy
+### 4.1 Where the Services Run
 
-To maintain security across both local development and production deployment without infrastructure overhead, network boundaries are enforced via two distinct tiers:
-
-* **Phase 1 (Local Development Tier):** Backend microservices run as independent OS processes bound to local ports (3000–3003). Communication with managed serverless cloud databases (Neon PostgreSQL, MongoDB Atlas, Upstash Valkey, CloudAMQP RabbitMQ) is strictly authenticated and encrypted over TLS/SSL (sslmode=require), preventing unencrypted data transmission over public networks.
-* **Phase 2 (Containerized Deployment Tier):** When packaged via Docker Compose for production deployment, internal infrastructure is completely isolated from the public internet. Only the API Gateway exposes a public host port (Port 3000 or Port 80). All backend microservices, databases, and message brokers reside on an internal Docker user-defined bridge network, rendering internal service ports completely unreachable from external IP addresses.
+* **Local (`npm run dev`):** the gateway runs on port 3000 and the backend services on 3001-3004, as plain local processes.
+* **Local (`docker compose up --build`):** all six containers (five services plus the nginx-served frontend) share Compose's default network.
+  * Only the gateway (3000) and the frontend (5173) are published to the host.
+  * The data stores are not containers here: PostgreSQL (Neon), MongoDB Atlas, Valkey (Upstash), and RabbitMQ (CloudAMQP) are managed cloud services in both local modes.
+* **Deployed (Render free tier):** free Render web services can send private-network requests but can't receive them. So **every backend service has a public HTTPS URL**, and inter-service calls travel over the public internet. Network isolation is not part of the security model; the internal service key (§4.2) is the boundary.
 
 ### 4.2 Inter-Service Communication Key
 
-When internal services communicate with each other (e.g., Order Service calling User Service to fetch a student's saved size profile), requests attach a shared environment secret in the header (`X-Internal-Service-Key`). Downstream services verify this header to ensure the request originated from an authentic internal microservice rather than a spoofed external source.
+* **Every backend service rejects requests without the key:** each service mounts a global middleware that requires a matching `X-Internal-Service-Key` header and returns `403` otherwise. This covers every route, including `/health`, and is mounted before any route.
+* **Who holds the key:** the gateway adds it to every request it proxies. The Order Service and Notification Service add it to their direct service-to-service calls. These calls are:
+  * Order → User: fetch the student's profile at checkout;
+  * Order → Catalog: read the item, reserve, commit, and roll back stock;
+  * Notification → Order: find the users who ordered an item.
+* **What it does and doesn't prove:** the key proves a request came through the gateway or from another backend service. It says nothing about the end user. User-level authorization comes from the gateway's JWT and role checks (§2).
 
-Internal-only endpoints (e.g. Catalog Service's stock reservation/rollback/commit routes, Order Service's by-item user lookup used by Notification Service) are reachable only by another backend service presenting this key. They are **not** part of the public API surface and must never be called directly by a frontend client.
+### 4.3 Data Store Connections
+
+* **PostgreSQL:** connections use TLS when `DATABASE_URL` contains `sslmode=require`, which the managed providers require. The pool is configured with `rejectUnauthorized: false`, so traffic is encrypted but the server certificate is not verified (§6).
+* **MongoDB, Valkey, RabbitMQ:** TLS is governed by each provider's connection URL.
+* **Secrets:** all secrets (database URLs, `JWT_SECRET`, `INTERNAL_SERVICE_KEY`) live in the repo-root `.env` locally (git-ignored) and in the Render dashboard in deployment. None are committed.
 
 ---
 
-## 5. Super Admin Administration (replaces the earlier "Diagnostics Panel" concept)
+## 5. Super Admin Administration
 
-An earlier revision of this specification and the frontend spec envisioned a Super Admin "Diagnostics Panel" — aggregated microservice health, circuit-breaker status, database pool/queue-depth monitoring. **That is no longer part of project scope.** No such endpoints exist, and none are planned; a college-project admin panel does not need enterprise-grade observability. The Super Admin's actual, implemented capabilities are all application-level administration:
+The Super Admin's capabilities are application-level only. There are no infrastructure diagnostics endpoints (service-health aggregation or queue/pool monitoring), and none are planned.
 
-* **`GET /api/v1/users/lookup?email=`** (`SUPER_ADMIN` only) — exact-match lookup of a user by email, returning their id/name/role/club so the Super Admin can decide whether to promote them. This is intentionally minimal: it is not a searchable user directory, and none is planned.
-* **`PUT /api/v1/users/:userId/role`** (`SUPER_ADMIN` only) — promotes a user to `CLUB_ADMIN` (or changes their role otherwise). A user already assigned to a club (non-null `club_id`) must be demoted first — this prevents a Super Admin from silently reassigning an existing Club Admin to a different club.
-* **`POST /api/v1/clubs`** (`SUPER_ADMIN` only) — creates a new club and, in the same database transaction, assigns the user identified by `admin_email` as its Club Admin (promoting them from `STUDENT` if needed). Clubs are therefore no longer permanently fixed/pre-seeded data — this is now a normal, supported write path. A `SUPER_ADMIN` cannot be assigned as a club's admin this way, and the same "must not already have a club" rule above applies.
+* **`GET /api/v1/users/lookup?email=`** (`SUPER_ADMIN` only): exact-match lookup of a user by email. It returns id, name, role, and club, so the Super Admin can decide whether to promote them. It is deliberately not a searchable directory.
+* **`PUT /api/v1/users/:userId/role`** (`SUPER_ADMIN` only): changes a user's role, e.g. promoting them to `CLUB_ADMIN` for an existing club. A user already assigned to a club must be demoted first, which prevents silently moving an existing Club Admin to a different club.
+* **`POST /api/v1/clubs`** (`SUPER_ADMIN` only): creates a club and, in the same database transaction, assigns the user identified by `admin_email` as its Club Admin, promoting them from `STUDENT` if needed.
+  * If either step fails, neither is saved.
+  * A `SUPER_ADMIN`, or a user who already belongs to a club, can't be assigned this way.
 
 ### 5.1 Self-Profile Identity Is JWT-Derived, Never Client-Supplied
 
-`GET /api/v1/users/profile/:userId` returns a user's own profile (name, phone, hostel block, preferred size). The authenticated caller's identity for this purpose is **always** taken from the verified JWT's `sub` claim — never from the `:userId` path parameter. The API Gateway attaches the JWT-derived id as a trusted `x-user-id` header (the same mechanism already used for `PUT /profile` and `PUT /size`), and user-service rejects the request with `403` if `:userId` doesn't match that header. A caller can therefore only ever retrieve their own profile through this endpoint, regardless of what `:userId` they put in the URL.
-
-Order-service also calls this endpoint directly (service-to-service, bypassing the gateway) during checkout, to fetch the checking-out student's saved size. It sets `x-user-id` itself (to the same `sub` it already extracted from that student's JWT) rather than going through the gateway — this is safe because it only ever requests that student's own profile, never anyone else's, so the ownership check still holds end-to-end.
+* **Through the gateway:** `GET /api/v1/users/profile/:userId` returns a user's own profile (name, phone, hostel block, preferred size). The caller's identity always comes from the verified JWT's `sub` claim, never from the `:userId` path parameter.
+  * The gateway sets `x-user-id` from the JWT, the same mechanism used for `PUT /profile` and `PUT /size`.
+  * The User Service returns `403` if `:userId` doesn't match that header. A caller can only ever retrieve their own profile, whatever `:userId` they put in the URL.
+* **From the Order Service:** it calls this endpoint directly during checkout to fetch the student's saved size. It sets `x-user-id` itself, to the `sub` from that student's JWT. This is safe because it only ever requests the checking-out student's own profile.
 
 ---
+
+## 6. Known Gaps
+
+These are documented so the spec doesn't overstate the system. None of them is fixed yet.
+
+* **Rate-limit keying behind a proxy:** the gateway doesn't set Express's `trust proxy`. Behind Render's proxy, `req.ip` is therefore likely the proxy's address rather than the client's, so clients may share one rate-limit bucket.
+* **Loosened rate limits:** the configured limits (1000 requests/minute) are far above the intended values (§3.1).
+* **Identity headers aren't stripped:** the gateway overwrites `x-user-role` on catalog and order routes, and overwrites `x-club-id` only when the user has a club. It never deletes client-supplied `x-user-id`, `x-user-role` or `x-club-id` headers. Every route that reads them today is either role-gated or overwrites them, so this is defense in depth, not a known exploit. Stripping them at the gateway would close it off.
+* **PostgreSQL certificate verification is off:** connections are encrypted, but `rejectUnauthorized: false` means the server certificate isn't verified (§4.3).
+* **Open CORS:** the gateway allows any origin (`cors()` with defaults). Tokens are sent in the `Authorization` header, not cookies, which limits the impact, but an explicit allow-list for the frontend's origin would be tighter.
