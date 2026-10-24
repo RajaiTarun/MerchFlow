@@ -119,3 +119,29 @@ Problems hit during development + how they were solved. Kept short for interview
 
 ---
 
+### 10. Gateway auth bypass — a student could make themselves SUPER_ADMIN via a second URL
+
+**Problem:** user-service mounts its auth routes and club routes both at `/`, and the gateway proxied the whole `/api/v1/users` and `/api/v1/clubs` prefixes to it, each only guarding the routes it expected. So the same "change role" handler was reachable two ways, and only one was guarded: `PUT /api/v1/clubs/:id/role` skipped the SUPER_ADMIN check. Confirmed by sending a student's token to it — got `200` and a real promotion. Same pattern exposed unauth club create (`POST /api/v1/users`), the super-admin lookup (`/clubs/lookup`), and internal-only catalog/orders routes.
+
+**Fix:** `allowOnly(...)` middleware in the gateway — each prefix forwards only an explicit allow-list of paths and `404`s everything else before it reaches a backend. The gateway (not the services) is the right layer, because it stamps the internal-service-key on every proxied request, so a backend can't tell a forwarded user request from a real service-to-service call.
+
+**Takeaway:** guarding "the routes I know are dangerous" is a blocklist you can silently outgrow; forward only what's intended instead. Two routers on one base path + a prefix proxy = routes reachable through the wrong door.
+
+### 11. Rate limits were effectively off, and keyed by the wrong IP
+
+**Problem:** both limiters were set to 1000/min (loosened during dev, never restored), and the gateway didn't set `trust proxy` — so behind Render's proxy `req.ip` was the proxy's address and every client shared one bucket.
+
+**Fix:** restored 100/min (catalog) and 5/min (orders), and added `app.set('trust proxy', 1)` so the limiter keys on the real client IP from `X-Forwarded-For`. Verified checkout trips `429` after 5.
+
+**Takeaway:** a rate limiter behind a proxy does nothing useful until the app trusts the proxy — otherwise it's one global bucket, not per-client. Also: dev-time "temporarily loosened" values have a way of shipping.
+
+### 12. Duplicate catalog rows from fast "Load More" clicks
+
+**Problem:** `loadMore` fetched with the current `nextCursor` and only advanced it after the response. Clicking again during the 1–2s wait re-used the same cursor, so the same page got fetched and appended again — one duplicate per extra click.
+
+**Fix:** a `useRef` re-entry guard (bails if a load is in flight) plus a `disabled` button while loading. The ref is the actual fix — a `useState` flag alone races, since two fast clicks both run before React re-renders and disables the button.
+
+**Takeaway:** "disable while in flight" needs a synchronous guard (ref) when the trigger can fire faster than a re-render; state-driven `disabled` is for the UX, not the correctness.
+
+---
+

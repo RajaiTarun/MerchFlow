@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiFetch } from '../api.js'
 import { useAuth } from '../AuthContext.jsx'
@@ -21,7 +21,14 @@ function CatalogPage() {
   const [clubId, setClubId] = useState('')
   const [nextCursor, setNextCursor] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState(null)
+
+  // Synchronous re-entry guard. A `loadingMore` state flag alone isn't enough:
+  // two fast clicks can both run before React re-renders and disables the
+  // button, and both would fetch the same (not-yet-advanced) cursor and append
+  // the same page twice. A ref updates immediately, so the second click bails.
+  const loadingMoreRef = useRef(false)
 
   // Fetched once - used both for the club filter dropdown and to show a
   // readable club name instead of a raw clubId in the table.
@@ -45,6 +52,11 @@ function CatalogPage() {
   }, [token, type, clubId])
 
   async function loadMore() {
+    // Ignore clicks while a page is already loading — otherwise each click
+    // fetches the same cursor and appends duplicate rows.
+    if (loadingMoreRef.current || !nextCursor) return
+    loadingMoreRef.current = true
+    setLoadingMore(true)
     try {
       const data = await apiFetch(
         `/catalog?${buildQuery({ type, clubId, cursor: nextCursor })}`,
@@ -54,6 +66,9 @@ function CatalogPage() {
       setNextCursor(data.nextCursor)
     } catch (err) {
       setError(err.body?.error || err.message)
+    } finally {
+      loadingMoreRef.current = false
+      setLoadingMore(false)
     }
   }
 
@@ -133,9 +148,10 @@ function CatalogPage() {
       {nextCursor && (
         <button
           onClick={loadMore}
-          className="mt-4 border border-gray-300 rounded px-4 py-2 hover:bg-gray-100"
+          disabled={loadingMore}
+          className="mt-4 border border-gray-300 rounded px-4 py-2 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          Load More
+          {loadingMore ? 'Loading...' : 'Load More'}
         </button>
       )}
     </div>
