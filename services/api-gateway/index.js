@@ -128,8 +128,28 @@ const userLookupProxy = createProxyMiddleware({
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Behind Render's (and Docker/any) reverse proxy, the socket address is the
+// proxy's, not the client's. Trusting one proxy hop makes Express read the
+// real client IP from X-Forwarded-For, so the rate limiter keys per actual
+// client instead of lumping everyone into one shared bucket (req.ip is the
+// key in middleware/rateLimiter.js).
+app.set('trust proxy', 1);
+
 // using middlewares, every request is first processed by middleware
 app.use(cors());
+
+// Forward only the paths a prefix is meant to expose; reject anything else
+// before it reaches a backend. user-service serves two routers (auth + clubs)
+// both at '/', so without this, one gateway prefix (e.g. /api/v1/clubs) can
+// reach the other router's routes (e.g. /:userId/role or /lookup). This also
+// keeps internal-only service-to-service routes (catalog stock/rollback/commit,
+// orders /by-item) off the public API surface — those are called directly
+// between services, never through the gateway. Patterns are relative to the
+// mount point, same as the scoped-mutation route lists below.
+const allowOnly = (allowed) => (req, res, next) => {
+    const ok = allowed.some(r => r.method === req.method && r.pattern.test(req.path));
+    return ok ? next() : res.status(404).json({ error: 'Not found' });
+};
 
 // rate limiter
 
@@ -173,7 +193,17 @@ const requireAuthForProfileAccess = (req, res, next) => {
     });
 };
 
-app.use('/api/v1/users', requireAuthForProfileAccess, userProxy);
+// Only the auth/profile routes are exposed through this prefix. POST / is NOT
+// listed, which blocks reaching clubRoutes' POST / (create club) via /api/v1/users.
+// The dedicated PUT /:userId/role and GET /lookup routes are handled above.
+const USER_PROXY_ROUTES = [
+    { method: 'POST', pattern: /^\/register$/ },
+    { method: 'POST', pattern: /^\/login$/ },
+    { method: 'PUT',  pattern: /^\/profile$/ },
+    { method: 'PUT',  pattern: /^\/size$/ },
+    { method: 'GET',  pattern: /^\/profile\/[^/]+$/ },
+];
+app.use('/api/v1/users', requireAuthForProfileAccess, allowOnly(USER_PROXY_ROUTES), userProxy);
 // GET / (list clubs) stays open to any authenticated user, same as before.
 // POST / (create club + assign admin) is SUPER_ADMIN only — same scoped-mutation
 // pattern as requireClubAdminForCreate/requireClubAdminForOrders below.
@@ -192,7 +222,14 @@ const requireSuperAdminForClubCreate = (req, res, next) => {
     return next();
 };
 
-app.use('/api/v1/clubs', authMiddleware, requireSuperAdminForClubCreate, clubsProxy);
+// Only GET / (list clubs) and POST / (create club) are exposed here. Anything
+// else — notably /:userId/role and /lookup, which exist on user-service's auth
+// router at '/' — is rejected before it can reach that router.
+const CLUB_PROXY_ROUTES = [
+    { method: 'GET',  pattern: /^\/$/ },
+    { method: 'POST', pattern: /^\/$/ },
+];
+app.use('/api/v1/clubs', authMiddleware, requireSuperAdminForClubCreate, allowOnly(CLUB_PROXY_ROUTES), clubsProxy);
 // Catalog mutation routes (item creation, delivery-slot updates) are restricted
 // to CLUB_ADMIN (SUPER_ADMIN is always allowed through requireRoles()). Every
 // other catalog route — GET listing, GET /:id, the inventory PATCH endpoints —
@@ -217,7 +254,17 @@ const requireClubAdminForCreate = (req, res, next) => {
     return next();
 };
 
-app.use('/api/v1/catalog', authMiddleware, catalogRateLimiter, requireClubAdminForCreate, injectClubId, catalogProxy);
+// Public catalog surface only: browse (GET /), item detail (GET /:id), create
+// (POST /) and delivery-slot (PUT /:id/delivery-slot). The stock reservation /
+// rollback / commit PATCH routes are internal — order-service calls them
+// directly — so they are deliberately absent and get 404'd at the gateway.
+const CATALOG_PROXY_ROUTES = [
+    { method: 'GET',  pattern: /^\/$/ },
+    { method: 'GET',  pattern: /^\/[^/]+$/ },
+    { method: 'POST', pattern: /^\/$/ },
+    { method: 'PUT',  pattern: /^\/[^/]+\/delivery-slot$/ },
+];
+app.use('/api/v1/catalog', authMiddleware, catalogRateLimiter, requireClubAdminForCreate, injectClubId, allowOnly(CATALOG_PROXY_ROUTES), catalogProxy);
 
 // GET /club (a club's own orders) and PATCH /:orderId/status (marking an
 // order DELIVERED) are restricted to CLUB_ADMIN (SUPER_ADMIN always passes
@@ -242,8 +289,27 @@ const requireClubAdminForOrders = (req, res, next) => {
     return next();
 };
 
-app.use('/api/v1/orders', authMiddleware, ordersRateLimiter, requireClubAdminForOrders, injectClubId, ordersProxy);
-app.use('/api/v1/notifications', authMiddleware, notificationsProxy);
+// Public order surface only: checkout (POST /), my orders (GET /), a club's
+// orders (GET /club), order detail (GET /:id) and mark-delivered
+// (PATCH /:orderId/status). GET /by-item/:id/users is internal — the
+// notification-service calls it directly — so its 3-segment path matches none
+// of these and is 404'd at the gateway.
+const ORDER_PROXY_ROUTES = [
+    { method: 'POST',  pattern: /^\/$/ },
+    { method: 'GET',   pattern: /^\/$/ },
+    { method: 'GET',   pattern: /^\/club$/ },
+    { method: 'GET',   pattern: /^\/[^/]+$/ },
+    { method: 'PATCH', pattern: /^\/[^/]+\/status$/ },
+];
+app.use('/api/v1/orders', authMiddleware, ordersRateLimiter, requireClubAdminForOrders, injectClubId, allowOnly(ORDER_PROXY_ROUTES), ordersProxy);
+
+// notification-service serves only its own router, so there's no cross-router
+// risk here, but the allow-list keeps the public surface explicit and future-proof.
+const NOTIFICATION_PROXY_ROUTES = [
+    { method: 'GET',   pattern: /^\/$/ },
+    { method: 'PATCH', pattern: /^\/[^/]+\/read$/ },
+];
+app.use('/api/v1/notifications', authMiddleware, allowOnly(NOTIFICATION_PROXY_ROUTES), notificationsProxy);
 
 app.use(express.json()); // basically this parses the user sent data from raw json to javascript object and if we don't use this and then do req.body the it will return undefined
 

@@ -88,7 +88,7 @@ const createRateLimiter = (maxTokens, windowMs, name) => {
     }
 }
 
-const catalogRateLimiter = createRateLimiter(1000, 60000, 'catalog'); // 100
-const ordersRateLimiter = createRateLimiter(1000, 60000, 'orders'); // 5
+const catalogRateLimiter = createRateLimiter(100, 60000, 'catalog'); // 100 catalog browses / min per IP
+const ordersRateLimiter = createRateLimiter(5, 60000, 'orders');     // 5 checkout attempts / min per IP
 
 module.exports = { catalogRateLimiter, ordersRateLimiter };
